@@ -21,13 +21,11 @@ trace-verify registry check --since 2026-06-23 --registry https://github.com/age
 
 ## Canonical Registry
 
-This is a mirror. The canonical TRACE registry with verification API and SLAs runs at [api.trace.opaque.com](https://api.trace.opaque.com).
-
-The mirror exists for independence — anyone can verify the registry without trusting Opaque infrastructure.
+This mirror exists for independence — anyone can verify Trust Record anchors without trusting any single operator's infrastructure. The canonical registry API is operated by OPAQUE Systems; the mirror and its git history are independently auditable.
 
 ## Status
 
-Private. First entries committed at CC Summit June 23, 2026 when cMCP goes live.
+Launching at Confidential Computing Summit, San Francisco, June 23 2026.
 
 ## License
 
