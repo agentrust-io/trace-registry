@@ -15,9 +15,12 @@ Each daily file in `registry/YYYY/MM/` is a newline-delimited JSON file where ea
 ## Verification
 
 ```bash
+# trace-verify CLI (planned — not yet published to PyPI)
 pip install trace-verify
 trace-verify registry check --since 2026-06-23 --registry https://github.com/agentrust-io/trace-registry
 ```
+
+Until `trace-verify` is published, verification can be done by cloning this repository and auditing the Merkle root hashes directly against your TRACE claim receipts.
 
 ## Canonical Registry
 
