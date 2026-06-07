@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate registry JSON files
+        run: |
+          find registry/ -name "*.ndjson" 2>/dev/null | while read f; do
+            echo "Checking $f..."
+            while IFS= read -r line; do
+              echo "$line" | python3 -m json.tool > /dev/null || { echo "Invalid JSON in $f: $line"; exit 1; }
+            done < "$f"
+          done
+          echo "All registry files valid (or no entries yet)"
+
+      - name: Check for required files
+        run: |
+          for f in LICENSE README.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md; do
+            [ -f "$f" ] || { echo "Missing required file: $f"; exit 1; }
+          done
+          echo "All required community health files present"
