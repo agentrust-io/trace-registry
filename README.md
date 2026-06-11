@@ -3,13 +3,15 @@
 
 # TRACE Registry
 
-The public accountability layer for TRACE claim anchors. Each entry records a TRACE claim anchor: the Merkle root hash, timestamp, and block number, committed to this repository as a permanent, independently-verifiable record.
+The public accountability layer for TRACE claim anchors. Each entry will record a TRACE claim anchor: the Merkle root hash, timestamp, and block number, committed to this repository as a permanent record.
 
 Git's immutable commit history is the append-only proof. Any tampering with registry entries is detectable via commit hash divergence.
 
+> **Status: pre-launch.** The registry contains no entries yet, and the anchor construction (how a Merkle root is derived from TRACE Trust Records, leaf hashing, inclusion proofs) is not yet specified. Until that specification and a published verifier ship, third-party verification is a design goal, not an operational guarantee. Track progress in [#5](https://github.com/agentrust-io/trace-registry/issues/5).
+
 ## Why this exists
 
-Anyone holding a TRACE trust record can independently verify that it was anchored in this registry without trusting the operator who issued it. TRACE claim anchors are published here so that verification is always possible by a third party, using only this public git history. This is the transparency guarantee: no single operator controls the audit trail.
+The goal: anyone holding a TRACE trust record can verify that it was anchored in this registry without trusting the operator who issued it, using only this public git history. No single operator controls the audit trail. The sections below describe the intended mechanism.
 
 ## Registry Format
 
@@ -19,9 +21,9 @@ Each daily file in `registry/YYYY/MM/` is a newline-delimited JSON file where ea
 {"ts": "2026-06-23T09:15:42Z", "merkle_root": "sha256:a3f8d2...", "block": 1, "producer": "cmcp-gateway/0.1.0"}
 ```
 
-## Verification
+## Verification (intended interface)
 
-**Manual verification (available now):** Clone this repository and audit the Merkle root hashes directly against your TRACE claim receipts.
+Once entries exist and the anchor format is specified, manual verification will be: clone this repository and audit the Merkle root hashes against your TRACE claim receipts.
 
 ```bash
 git clone https://github.com/agentrust-io/trace-registry.git
@@ -37,7 +39,7 @@ git clone https://github.com/agentrust-io/trace-registry.git
 
 ## Canonical Registry
 
-This mirror exists for independence. Anyone can verify TRACE claim anchors without trusting any single operator's infrastructure. The mirror and its git history are independently auditable.
+This mirror exists for independence: once operational, TRACE claim anchors can be checked without trusting any single operator's infrastructure, and the git history is auditable by anyone.
 
 ## License
 
