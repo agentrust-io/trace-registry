@@ -12,15 +12,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate registry JSON files
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install validation dependencies
+        run: pip install jsonschema==4.26.0
+
+      - name: Validate registry entries against schema
+        run: python tools/validate_registry.py
+
+      - name: Run tool tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Round-trip the sample anchor
         run: |
-          find registry/ -name "*.ndjson" 2>/dev/null | while read f; do
-            echo "Checking $f..."
-            while IFS= read -r line; do
-              echo "$line" | python3 -m json.tool > /dev/null || { echo "Invalid JSON in $f: $line"; exit 1; }
-            done < "$f"
-          done
-          echo "All registry files valid (or no entries yet)"
+          set -euo pipefail
+          # Re-anchor the committed sample claim and check the recomputed
+          # Merkle root matches the committed registry entry.
+          recomputed=$(python tools/anchor.py samples/example-trust-record.json \
+              --producer ci --proof-dir "$(mktemp -d)" \
+              | python -c "import json,sys; print(json.load(sys.stdin)['merkle_root'])")
+          committed=$(python -c "import json; print(json.loads(open('registry/2026/06/12.ndjson').readline())['merkle_root'])")
+          echo "recomputed: $recomputed"
+          echo "committed:  $committed"
+          test "$recomputed" = "$committed"
+          # Verify the committed inclusion proof against the committed entry.
+          python tools/verify_inclusion.py \
+            --claim samples/example-trust-record.json \
+            --proof samples/inclusion-proof.json \
+            --entry registry/2026/06/12.ndjson
 
       - name: Check for required files
         run: |
