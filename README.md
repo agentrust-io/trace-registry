@@ -1,5 +1,6 @@
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](LICENSE)
 [![TRACE Spec](https://img.shields.io/badge/TRACE-Spec_v0.1-0ea5e9)](https://github.com/agentrust-io/trace-spec)
+[![Discord](https://dcbadge.limes.pink/api/server/9JWNpH7E?style=flat)](https://discord.gg/9JWNpH7E)
 
 # TRACE Registry
 
@@ -83,6 +84,10 @@ hand back to claim holders.
 This repository exists for independence: TRACE claim anchors can be checked
 without trusting any single operator's infrastructure, and the git history is
 auditable by anyone.
+
+## Community
+
+Questions, feedback, integration help: [Discord](https://discord.gg/9JWNpH7E).
 
 ## License
 
