@@ -3,43 +3,86 @@
 
 # TRACE Registry
 
-The public accountability layer for TRACE claim anchors. Each entry will record a TRACE claim anchor: the Merkle root hash, timestamp, and block number, committed to this repository as a permanent record.
+The public accountability layer for TRACE claim anchors. Each entry records the
+Merkle root of a batch of signed TRACE Trust Records, committed to this
+repository as an append-only record. Git's commit history is the
+tamper-evidence layer: any rewrite of a published entry diverges the commit
+hashes that auditors and mirrors have already observed.
 
-Git's immutable commit history is the append-only proof. Any tampering with registry entries is detectable via commit hash divergence.
+The anchor construction (canonical claim bytes, leaf hashing, RFC 6962 Merkle
+tree, inclusion proofs) is specified in
+[docs/anchor-format.md](docs/anchor-format.md). A third party can implement a
+verifier from that document alone; the reference tools in [tools/](tools/) are
+one implementation.
 
-> **Status: pre-launch.** The registry contains no entries yet, and the anchor construction (how a Merkle root is derived from TRACE Trust Records, leaf hashing, inclusion proofs) is not yet specified. Until that specification and a published verifier ship, third-party verification is a design goal, not an operational guarantee. Track progress in [#5](https://github.com/agentrust-io/trace-registry/issues/5).
+> **Status.** The format, reference tooling, schema validation, and a first
+> real entry ([registry/2026/06/12.ndjson](registry/2026/06/12.ndjson)) are
+> live. Anchoring is currently manual and low volume; a continuous anchoring
+> cadence and a packaged `trace-verify` CLI on PyPI are planned but not yet
+> operational.
 
 ## Why this exists
 
-The goal: anyone holding a TRACE trust record can verify that it was anchored in this registry without trusting the operator who issued it, using only this public git history. No single operator controls the audit trail. The sections below describe the intended mechanism.
+Anyone holding a TRACE trust record and its inclusion proof can verify that the
+record was anchored in this registry without trusting the operator who issued
+it, using only this public git history and the verifier below. No single
+operator controls the audit trail.
 
 ## Registry Format
 
-Each daily file in `registry/YYYY/MM/` is a newline-delimited JSON file where each line is one anchor entry:
+Each daily file in `registry/YYYY/MM/` is newline-delimited JSON, one anchor
+entry per line, validated by CI against
+[schema/registry-entry.schema.json](schema/registry-entry.schema.json):
 
 ```json
-{"ts": "2026-06-23T09:15:42Z", "merkle_root": "sha256:a3f8d2...", "block": 1, "producer": "cmcp-gateway/0.1.0"}
+{"ts": "2026-06-12T18:09:41Z", "merkle_root": "sha256:9279...bada", "leaf_count": 1, "producer": "cmcp-gateway/0.1.0", "batch_id": "2026-06-12-001"}
 ```
 
-## Verification (intended interface)
+Entries are append-only. See [docs/anchor-format.md](docs/anchor-format.md)
+for field semantics.
 
-Once entries exist and the anchor format is specified, manual verification will be: clone this repository and audit the Merkle root hashes against your TRACE claim receipts.
+## Verifying a claim
+
+You need three things: your signed claim (Trust Record), the inclusion proof
+your producer gave you, and the registry entry for the batch. Then:
 
 ```bash
 git clone https://github.com/agentrust-io/trace-registry.git
-# Compare merkle_root values in registry/YYYY/MM/ against your TRACE claim receipts
+cd trace-registry
+python tools/verify_inclusion.py \
+  --claim samples/example-trust-record.json \
+  --proof samples/inclusion-proof.json \
+  --entry registry/2026/06/12.ndjson
+# OK: claim is included in batch '2026-06-12-001' (root sha256:9279..., ts 2026-06-12T18:09:41Z)
 ```
 
-> **Note:** A `trace-verify` CLI is planned but not yet published to PyPI. The commands below show the intended interface once it ships.
->
-> ```bash
-> pip install trace-verify
-> trace-verify registry check --since 2026-06-23 --registry https://github.com/agentrust-io/trace-registry
-> ```
+Exit code 0 means the claim is proven included; 1 means it is not. The
+verifier is a single standard-library Python file, so you can audit it (or
+reimplement it from the spec) rather than trust it. The `samples/` files above
+are a real anchored example you can use to exercise the tooling.
+
+Inclusion verification proves the signed claim bytes were anchored at the
+entry's timestamp. Validating the claim's signature against the producer key
+is a separate TRACE step.
+
+## Anchoring claims
+
+Producers batch signed claims and anchor them with:
+
+```bash
+python tools/anchor.py claim1.json claim2.json \
+  --producer my-gateway/1.0 --proof-dir proofs/ \
+  >> registry/2026/06/12.ndjson
+```
+
+This emits the registry entry line and writes one inclusion proof per claim to
+hand back to claim holders.
 
 ## Canonical Registry
 
-This mirror exists for independence: once operational, TRACE claim anchors can be checked without trusting any single operator's infrastructure, and the git history is auditable by anyone.
+This repository exists for independence: TRACE claim anchors can be checked
+without trusting any single operator's infrastructure, and the git history is
+auditable by anyone.
 
 ## License
 

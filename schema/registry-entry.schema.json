@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/agentrust-io/trace-registry/blob/main/schema/registry-entry.schema.json",
+  "title": "TRACE Registry Anchor Entry",
+  "description": "One line of a registry/YYYY/MM/DD.ndjson file. Normative format: docs/anchor-format.md section 4.",
+  "type": "object",
+  "required": ["ts", "merkle_root", "leaf_count", "producer", "batch_id"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "Anchoring time, ISO-8601 UTC with Z suffix"
+    },
+    "merkle_root": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "RFC 6962 Merkle tree root over the batch, hex-encoded"
+    },
+    "leaf_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of leaves (signed claims) in the batch"
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Identifier of the party that produced and submitted the batch"
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "Producer-scoped unique identifier for the batch"
+    }
+  }
+}
