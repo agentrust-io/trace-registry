@@ -10,6 +10,14 @@ repository as an append-only record. Git's commit history is the
 tamper-evidence layer: any rewrite of a published entry diverges the commit
 hashes that auditors and mirrors have already observed.
 
+## Current Registry State
+
+The registry currently contains one development entry (registry/2026/06/12.ndjson).
+This is a software-only example anchor with advisory enforcement and a zeroed
+measurement, committed as a launch-day example. It does not represent a production
+Trust Record. The first production entries will be added after Confidential Computing
+Summit launch on June 23, 2026.
+
 The anchor construction (canonical claim bytes, leaf hashing, RFC 6962 Merkle
 tree, inclusion proofs) is specified in
 [docs/anchor-format.md](docs/anchor-format.md). A third party can implement a
