@@ -21,7 +21,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -40,11 +39,6 @@ jobs:
           pip install twine
           twine check dist/*
           ls -lh dist/
-
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/*
 
       - name: Publish to PyPI
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
