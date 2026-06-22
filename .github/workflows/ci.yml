@@ -16,8 +16,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install validation dependencies
-        run: pip install jsonschema==4.26.0
+      - name: Install dependencies
+        run: pip install jsonschema==4.26.0 hatchling
+
+      - name: Install trace-verify package (editable)
+        run: pip install -e .
+
+      - name: Smoke-test trace-verify CLI
+        run: |
+          set -euo pipefail
+          trace-verify --version
+          trace-verify \
+            --claim samples/example-trust-record.json \
+            --proof samples/inclusion-proof.json \
+            --entry registry/2026/06/12.ndjson
+          trace-verify \
+            --claim samples/example-trust-record.json \
+            --proof samples/inclusion-proof.json \
+            --entry registry/2026/06/12.ndjson \
+            --json | python -c "import json,sys; r=json.load(sys.stdin); assert r['verified'], r"
 
       - name: Validate registry entries against schema
         run: python tools/validate_registry.py
