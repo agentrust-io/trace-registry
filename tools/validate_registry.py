@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Validate every line of every registry/**/*.ndjson file against the entry schema.
 
+Checks enforced:
+  - Every line is valid JSON matching schema/registry-entry.schema.json
+  - No blank lines
+  - Timestamps are monotonically non-decreasing within each file
+
 Used by CI. Requires the `jsonschema` package (the reference anchor/verify
 tools themselves are stdlib-only; this validator is a CI convenience).
 
@@ -37,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
     for day_file in day_files:
         rel = day_file.relative_to(REPO_ROOT) if day_file.is_relative_to(REPO_ROOT) else day_file
+        prev_ts: str | None = None
+
         for lineno, line in enumerate(
             day_file.read_text(encoding="utf-8").splitlines(), start=1
         ):
@@ -50,10 +57,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{rel}:{lineno}: invalid JSON: {exc}")
                 failures += 1
                 continue
+
             errors = sorted(validator.iter_errors(entry), key=str)
             for error in errors:
                 print(f"{rel}:{lineno}: schema violation: {error.message}")
             failures += len(errors)
+
+            ts = entry.get("ts")
+            if isinstance(ts, str):
+                if prev_ts is not None and ts < prev_ts:
+                    print(
+                        f"{rel}:{lineno}: timestamp out of order: "
+                        f"{ts!r} < previous {prev_ts!r}"
+                    )
+                    failures += 1
+                prev_ts = ts
+
         print(f"validated {rel}")
 
     if failures:
