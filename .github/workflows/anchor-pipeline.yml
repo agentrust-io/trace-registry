@@ -1,0 +1,88 @@
+name: Anchor pipeline
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"  # every 15 minutes
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute batches without committing"
+        required: false
+        type: boolean
+        default: false
+      max_batch:
+        description: "Max claims per batch (0 = unlimited)"
+        required: false
+        type: number
+        default: 0
+
+concurrency:
+  group: anchor-pipeline
+  cancel-in-progress: false  # queue rather than cancel; registry must stay consistent
+
+permissions:
+  contents: write  # needed to push the commit
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Run batch anchor pipeline
+        id: pipeline
+        run: |
+          set -euo pipefail
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          MAX_BATCH="${{ github.event.inputs.max_batch }}"
+          MAX_BATCH="${MAX_BATCH:-0}"
+
+          python tools/batch_anchor.py \
+            --json \
+            --max-batch "$MAX_BATCH" \
+            $DRY_RUN_FLAG \
+            | tee pipeline-report.json
+
+          # Surface whether any batches were anchored for the commit step
+          ANCHORED=$(python -c "
+          import json, sys
+          r = json.load(open('pipeline-report.json'))
+          anchored = [b for b in r.get('batches', []) if b.get('status') == 'anchored']
+          print(len(anchored))
+          ")
+          echo "anchored_count=$ANCHORED" >> "$GITHUB_OUTPUT"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## Anchor pipeline report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat pipeline-report.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit anchored batches
+        if: steps.pipeline.outputs.anchored_count != '0'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add registry/ proofs/ staging/
+
+          BATCH_COUNT="${{ steps.pipeline.outputs.anchored_count }}"
+          TS=$(python -c "import json; r=json.load(open('pipeline-report.json')); print(r['ts'])")
+
+          git commit -m "chore(pipeline): anchor ${BATCH_COUNT} batch(es) at ${TS} [skip ci]"
+
+      - name: Push
+        if: steps.pipeline.outputs.anchored_count != '0'
+        run: git push origin main
