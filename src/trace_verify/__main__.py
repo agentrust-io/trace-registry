@@ -3,10 +3,11 @@
 Usage:
     trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson
     trace-verify --claim CLAIM.json --proof PROOF.json --entry-url URL
+    trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson --verify-signature --producers-dir ./producers
     python -m trace_verify ...
 
-Exit code 0: claim is proven included.
-Exit code 1: proof does not verify.
+Exit code 0: claim is proven included (and signature valid, if --verify-signature).
+Exit code 1: proof does not verify or signature is invalid.
 Exit code 2: bad arguments or unreadable files.
 """
 
@@ -79,18 +80,26 @@ def _die(msg: str, code: int = 2) -> None:
     sys.exit(code)
 
 
-def _output(ok: bool, entry: dict, as_json: bool) -> None:
+def _output(ok: bool, entry: dict, sig_result: bool | None, as_json: bool) -> None:
     if as_json:
-        print(json.dumps({
+        result: dict = {
             "verified": ok,
             "batch_id": entry.get("batch_id"),
             "merkle_root": entry.get("merkle_root"),
             "ts": entry.get("ts"),
-        }))
+        }
+        if sig_result is not None:
+            result["signature_valid"] = sig_result
+        print(json.dumps(result))
     elif ok:
+        sig_note = ""
+        if sig_result is True:
+            sig_note = ", signature valid"
+        elif sig_result is False:
+            sig_note = ", signature INVALID"
         print(
             f"OK: claim is included in batch {entry.get('batch_id')!r} "
-            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')})"
+            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}){sig_note}"
         )
     else:
         print(
@@ -124,6 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="select the entry with this batch_id from a multi-line day file")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="emit a machine-readable JSON result instead of plain text")
+
+    p.add_argument("--verify-signature", action="store_true",
+                   help=(
+                       "also verify the claim's Ed25519 signature against the producer key "
+                       "registry (requires 'cryptography' package; see --producers-dir)"
+                   ))
+    p.add_argument("--producers-dir", default=None, metavar="DIR",
+                   help=(
+                       "directory containing producer key .json files "
+                       "(default: producers/ relative to the current directory)"
+                   ))
     return p
 
 
@@ -136,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
 
     entry_source = args.entry_url if args.entry_url else args.entry
     entry = _load_entry(entry_source, args.batch_id)
+
+    sig_result: bool | None = None
 
     try:
         if not isinstance(claim, dict):
@@ -161,7 +183,34 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    _output(ok, entry, args.as_json)
+    if args.verify_signature:
+        from trace_verify._signature import load_producer_key, verify_claim_signature
+
+        producers_dir = Path(args.producers_dir) if args.producers_dir else Path("producers")
+        producer_id = claim.get("producer") if isinstance(claim, dict) else None
+        if not producer_id:
+            _die("claim has no 'producer' field; cannot look up signing key")
+
+        key_entry = load_producer_key(producer_id, producers_dir)
+        if key_entry is None:
+            _die(
+                f"no key file found for producer {producer_id!r} in {producers_dir}; "
+                "register the producer first"
+            )
+
+        try:
+            sig_result = verify_claim_signature(claim, key_entry["public_key_jwk"])
+        except (ImportError, ValueError) as exc:
+            if args.as_json:
+                print(json.dumps({"verified": False, "signature_valid": False, "error": str(exc)}))
+            else:
+                print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+        if not sig_result:
+            ok = False
+
+    _output(ok, entry, sig_result, args.as_json)
     return 0 if ok else 1
 
 

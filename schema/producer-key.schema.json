@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/agentrust-io/trace-registry/blob/main/schema/producer-key.schema.json",
+  "title": "TRACE Producer Key",
+  "description": "One file in producers/. Maps a producer_id to its Ed25519 signing key.",
+  "type": "object",
+  "required": ["producer_id", "key_type", "public_key_jwk", "active_since", "contact"],
+  "additionalProperties": false,
+  "properties": {
+    "producer_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\\.[0-9]+\\.[0-9]+[A-Za-z0-9._+\\-]*$",
+      "description": "Must match the producer field used in registry entries"
+    },
+    "key_type": {
+      "type": "string",
+      "enum": ["Ed25519"],
+      "description": "Only Ed25519 is supported in this version"
+    },
+    "public_key_jwk": {
+      "type": "object",
+      "required": ["kty", "crv", "x"],
+      "additionalProperties": false,
+      "properties": {
+        "kty": {"type": "string", "const": "OKP"},
+        "crv": {"type": "string", "const": "Ed25519"},
+        "x": {
+          "type": "string",
+          "minLength": 43,
+          "maxLength": 43,
+          "description": "Base64url-encoded 32-byte Ed25519 public key, no padding"
+        },
+        "kid": {"type": "string", "description": "Optional key ID"}
+      }
+    },
+    "active_since": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "ISO-8601 UTC timestamp when this key became active"
+    },
+    "contact": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Email or URL for the producer's security contact"
+    }
+  }
+}
