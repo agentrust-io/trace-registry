@@ -1,0 +1,12 @@
+{
+  "producer_id": "trace-verify-ci/0.1.0",
+  "key_type": "Ed25519",
+  "public_key_jwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "n3hlK67VhNMYHPJl99wsmL0IPm3S49gRtsM_rULFcAc",
+    "kid": "tvci-31cdacb2"
+  },
+  "active_since": "2026-06-22T00:00:00Z",
+  "contact": "security@opaque.co"
+}

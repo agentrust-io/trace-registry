@@ -1,0 +1,8 @@
+{
+  "fmt": 1,
+  "producer": "trace-verify-ci/0.1.0",
+  "ts": "2026-06-22T00:00:00Z",
+  "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "note": "zeroed-test-anchor",
+  "signature": "KB6KNvrLFY1GKY6vkuQG4WVxoK-TneK5iN1gcLxFlEGQx24f_rZ5okSKk9a84JwutBJr-BjzoqK3N_i-EsgLDA"
+}
