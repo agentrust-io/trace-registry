@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -18,6 +20,21 @@ jobs:
 
       - name: Install validation dependencies
         run: pip install jsonschema==4.26.0
+
+      - name: Determine base SHA for append-only check
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check registry is append-only
+        if: steps.base.outputs.sha != ''
+        run: python tools/check_append_only.py "${{ steps.base.outputs.sha }}"
 
       - name: Validate registry entries against schema
         run: python tools/validate_registry.py

@@ -27,7 +27,8 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "description": "Identifier of the party that produced and submitted the batch"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\\.[0-9]+\\.[0-9]+[A-Za-z0-9._+\\-]*$",
+      "description": "Identifier of the party that produced and submitted the batch, in the form name/semver (e.g. cmcp-gateway/1.2.0)"
     },
     "batch_id": {
       "type": "string",
