@@ -56,6 +56,9 @@ jobs:
       - name: Validate registry entries against schema
         run: python tools/validate_registry.py
 
+      - name: Validate producer key files
+        run: python tools/validate_producers.py
+
       - name: Run tool tests
         run: python -m unittest discover -s tests -v
 

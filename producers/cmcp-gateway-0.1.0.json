@@ -1,0 +1,12 @@
+{
+  "producer_id": "cmcp-gateway/0.1.0",
+  "key_type": "Ed25519",
+  "public_key_jwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "ToB3lvrNHGjbh8ZPnK0Ogh0zTxLNURCt1rjk5L_M18Q",
+    "kid": "cmcp-4e807796"
+  },
+  "active_since": "2026-06-12T00:00:00Z",
+  "contact": "security@opaque.co"
+}
