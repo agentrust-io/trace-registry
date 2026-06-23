@@ -10,10 +10,6 @@ readme = "README.md"
 license = { text = "CC-BY-4.0" }
 requires-python = ">=3.9"
 dependencies = []
-
-[project.optional-dependencies]
-signature = ["cryptography>=41.0"]
-
 keywords = ["trace", "merkle", "inclusion-proof", "audit", "ai-governance"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -28,6 +24,9 @@ classifiers = [
     "Topic :: Security :: Cryptography",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+[project.optional-dependencies]
+signature = ["cryptography>=41.0"]
 
 [project.scripts]
 trace-verify = "trace_verify.__main__:main"
