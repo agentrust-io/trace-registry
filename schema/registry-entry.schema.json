@@ -58,7 +58,8 @@
     }
   },
   "if": {
-    "properties": {"entry_type": {"const": "checkpoint"}}
+    "properties": {"entry_type": {"const": "checkpoint"}},
+    "required": ["entry_type"]
   },
   "then": {
     "required": ["batch_count", "first_batch_ts", "last_batch_ts"]
