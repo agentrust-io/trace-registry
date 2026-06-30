@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aggregator._core import TRACEAggregator, _batch_id, _canonical, _leaf_hash
+from aggregator._core import TRACEAggregator, _batch_id, _canonical
 
 
 def _claim(producer="test-producer/1.0.0", tag="a"):
@@ -22,13 +22,18 @@ def _claim(producer="test-producer/1.0.0", tag="a"):
             "hash": f"sha256:{h}", "signature": "dummy"}
 
 
-def _make_agg(tmp: Path, flush_interval=0.2, max_batch_size=0) -> TRACEAggregator:
+def _make_agg(tmp: Path, flush_interval=0.2, max_batch_size=0,
+              verify_signatures=False) -> TRACEAggregator:
+    # Most tests here exercise batching/Merkle mechanics, not the signature
+    # policy, so signature verification is off by default. Signature-policy
+    # behaviour is covered by TestSignatureGate below.
     return TRACEAggregator(
         registry_dir=tmp / "registry",
         proofs_dir=tmp / "proofs",
         flush_interval=flush_interval,
         max_batch_size=max_batch_size,
         git_commit=False,
+        verify_signatures=verify_signatures,
     )
 
 
@@ -159,9 +164,96 @@ class TestAggregatorSubmit(unittest.TestCase):
         self.assertEqual(sum(results), 30)  # 10 producers x 3 claims
 
 
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+
+
+def _signed_claim(priv, producer, tag="a"):
+    import base64
+    from trace_verify._signature import canonical_body_bytes
+    body = {"fmt": 1, "producer": producer, "ts": "2026-06-23T00:00:00Z",
+            "hash": f"sha256:{'0' * 63}{tag}"}
+    sig = priv.sign(canonical_body_bytes(body))
+    return {**body, "signature": base64.urlsafe_b64encode(sig).rstrip(b"=").decode()}
+
+
+def _write_producer_key(producers_dir: Path, producer, priv):
+    import base64
+    producers_dir.mkdir(parents=True, exist_ok=True)
+    x = base64.urlsafe_b64encode(
+        priv.public_key().public_bytes_raw()
+    ).rstrip(b"=").decode()
+    entry = {
+        "producer_id": producer,
+        "key_type": "Ed25519",
+        "public_key_jwk": {"kty": "OKP", "crv": "Ed25519", "x": x},
+        "active_since": "2026-06-01T00:00:00Z",
+        "contact": "test@example.com",
+    }
+    fname = producer.replace("/", "-") + ".json"
+    (producers_dir / fname).write_text(json.dumps(entry), encoding="utf-8")
+
+
+@unittest.skipUnless(HAS_CRYPTOGRAPHY, "cryptography package not installed")
+class TestSignatureGate(unittest.TestCase):
+    """Fail-closed: the aggregator only anchors signature-verified claims from
+    registered producers when verify_signatures is on (the default)."""
+
+    def _agg(self, tmp, producers_dir):
+        return TRACEAggregator(
+            registry_dir=tmp / "registry",
+            proofs_dir=tmp / "proofs",
+            flush_interval=0.2,
+            git_commit=False,
+            producers_dir=producers_dir,
+            verify_signatures=True,
+        )
+
+    def test_accepts_properly_signed_claim(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            producers = tmp / "producers"
+            _write_producer_key(producers, "good/1.0.0", priv)
+            agg = self._agg(tmp, producers)
+            claim = _signed_claim(priv, "good/1.0.0")
+            results = agg.submit([claim])
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].get("rejected"))
+        self.assertIn("batch_id", results[0])
+
+    def test_rejects_unknown_producer(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            producers = tmp / "producers"
+            producers.mkdir()  # no key registered
+            agg = self._agg(tmp, producers)
+            claim = _signed_claim(priv, "unknown/1.0.0")
+            results = agg.submit([claim])
+        self.assertTrue(results[0].get("rejected"))
+        # nothing anchored
+        self.assertEqual(list((tmp / "registry").rglob("*.ndjson")), [])
+
+    def test_rejects_bad_signature(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            producers = tmp / "producers"
+            _write_producer_key(producers, "good/1.0.0", priv)
+            agg = self._agg(tmp, producers)
+            claim = _signed_claim(priv, "good/1.0.0")
+            claim["hash"] = "sha256:" + "f" * 64  # tamper after signing
+            results = agg.submit([claim])
+        self.assertTrue(results[0].get("rejected"))
+        self.assertEqual(list((tmp / "registry").rglob("*.ndjson")), [])
+
+
 class TestHTTPServer(unittest.TestCase):
     def _start_server(self, tmp: Path, flush_interval=0.2):
-        import urllib.request
         from aggregator.server import AggregatorHTTPServer
         agg = _make_agg(tmp, flush_interval=flush_interval)
         server = AggregatorHTTPServer(("127.0.0.1", 0), agg)
@@ -171,7 +263,8 @@ class TestHTTPServer(unittest.TestCase):
         return server, port
 
     def _post(self, port, body: dict) -> tuple[int, dict]:
-        import urllib.error, urllib.request
+        import urllib.error
+        import urllib.request
         data = json.dumps(body).encode()
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/batch",
@@ -188,7 +281,8 @@ class TestHTTPServer(unittest.TestCase):
             return 500, {"error": str(exc)}
 
     def _get(self, port, path: str) -> tuple[int, dict]:
-        import urllib.request, urllib.error
+        import urllib.request
+        import urllib.error
         try:
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{port}{path}", timeout=10

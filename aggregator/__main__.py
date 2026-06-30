@@ -33,10 +33,23 @@ def main(argv: list[str] | None = None) -> int:
                         help="trigger early flush when pending claims >= N (0 = never, default: 0)")
     parser.add_argument("--git-commit", action="store_true",
                         help="run git add + git commit after each flush")
+    parser.add_argument("--producers-dir", default=None, metavar="DIR",
+                        help="producer key directory (default: producers/ in repo root)")
+    parser.add_argument("--no-verify-signatures", action="store_true",
+                        help="DANGEROUS: anchor claims without verifying producer "
+                             "signatures (default: verify and reject unverified claims)")
     args = parser.parse_args(argv)
 
     registry_dir = Path(args.registry_dir) if args.registry_dir else REPO_ROOT / "registry"
     proofs_dir = Path(args.proofs_dir) if args.proofs_dir else REPO_ROOT / "proofs"
+    producers_dir = Path(args.producers_dir) if args.producers_dir else REPO_ROOT / "producers"
+
+    if args.no_verify_signatures:
+        print(
+            "WARNING: --no-verify-signatures is set; claims will be anchored "
+            "WITHOUT verifying producer signatures. Do not use in production.",
+            flush=True,
+        )
 
     from aggregator._core import TRACEAggregator
     from aggregator.server import AggregatorHTTPServer
@@ -47,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
         flush_interval=args.flush_interval,
         max_batch_size=args.max_batch,
         git_commit=args.git_commit,
+        producers_dir=producers_dir,
+        verify_signatures=not args.no_verify_signatures,
     )
 
     server = AggregatorHTTPServer((args.host, args.port), aggregator)

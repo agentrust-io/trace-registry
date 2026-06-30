@@ -43,6 +43,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Make the bundled trace_verify package importable for signature verification.
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
@@ -151,6 +154,25 @@ def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Signature verification (fail-closed)
+# ---------------------------------------------------------------------------
+
+def verify_group(
+    producer: str, records: list[tuple[Path, dict]], producers_dir: Path
+) -> str | None:
+    """Return None if every claim in the group verifies against the producer's
+    registered key, else a string reason. Fail-closed: a missing key or a bad
+    signature rejects the whole group so it is never anchored."""
+    from trace_verify._signature import verify_claim_against_registry
+
+    for _, claim in records:
+        ok, reason = verify_claim_against_registry(claim, producer, producers_dir)
+        if not ok:
+            return reason
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Anchoring
 # ---------------------------------------------------------------------------
 
@@ -250,13 +272,26 @@ def main(argv: list[str] | None = None) -> int:
                         help="compute without writing any files")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="emit machine-readable JSON summary")
+    parser.add_argument("--producers-dir", default=None, metavar="DIR",
+                        help="producer key directory (default: producers/ in repo root)")
+    parser.add_argument("--no-verify-signatures", action="store_true",
+                        help="DANGEROUS: anchor claims without verifying producer "
+                             "signatures (default: verify and reject unverified claims)")
     args = parser.parse_args(argv)
 
     staging_dir = Path(args.staging_dir) if args.staging_dir else REPO_ROOT / "staging"
     registry_dir = Path(args.registry_dir) if args.registry_dir else REPO_ROOT / "registry"
     proofs_dir = Path(args.proofs_dir) if args.proofs_dir else REPO_ROOT / "proofs"
+    producers_dir = Path(args.producers_dir) if args.producers_dir else REPO_ROOT / "producers"
     incoming_dir = staging_dir / "incoming"
     processed_dir = staging_dir / "processed"
+
+    if args.no_verify_signatures:
+        print(
+            "WARNING: --no-verify-signatures is set; claims will be anchored "
+            "WITHOUT verifying producer signatures. Do not use in production.",
+            file=sys.stderr,
+        )
 
     if not incoming_dir.exists():
         msg = f"staging/incoming not found at {incoming_dir}"
@@ -285,6 +320,21 @@ def main(argv: list[str] | None = None) -> int:
     for producer, group_records in groups.items():
         claims = [c for _, c in group_records]
         b_id = batch_id_for(claims)
+
+        if not args.no_verify_signatures:
+            reason = verify_group(producer, group_records, producers_dir)
+            if reason is not None:
+                result = {
+                    "status": "rejected",
+                    "producer": producer,
+                    "batch_id": b_id,
+                    "detail": reason,
+                }
+                failures += 1
+                if not args.as_json:
+                    print(f"REJECT {producer} batch {b_id}: {reason}", file=sys.stderr)
+                results.append(result)
+                continue
 
         if is_already_anchored(b_id, registry_dir):
             result = {

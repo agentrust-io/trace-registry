@@ -3,11 +3,18 @@
 Usage:
     trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson
     trace-verify --claim CLAIM.json --proof PROOF.json --entry-url URL
-    trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson --verify-signature --producers-dir ./producers
+    trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson --producers-dir ./producers
     python -m trace_verify ...
 
-Exit code 0: claim is proven included (and signature valid, if --verify-signature).
-Exit code 1: proof does not verify or signature is invalid.
+By default the claim's Ed25519 signature is verified against the producer key
+registry: exit code 0 means BOTH Merkle inclusion and the producer signature
+verified. Pass --no-verify-signature to skip signature verification and check
+inclusion only (prints a warning; inclusion alone does not prove the named
+producer signed the claim).
+
+Exit code 0: claim is proven included AND (unless --no-verify-signature) signed.
+Exit code 1: inclusion proof or signature does not verify, or the producer key
+             is missing / unloadable so the signature cannot be verified.
 Exit code 2: bad arguments or unreadable files.
 """
 
@@ -17,11 +24,31 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from trace_verify import __version__
 from trace_verify._verify import decode_hash, verify_inclusion
+
+# SSRF guard: only fetch registry entries over https from known registry hosts.
+# This blocks file://, http://, and internal/metadata targets such as
+# 169.254.169.254.
+_ALLOWED_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
+
+
+def _check_url_allowed(url: str) -> str | None:
+    """Return None if url is safe to fetch, else a rejection reason."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:
+        return f"cannot parse URL: {exc}"
+    if parsed.scheme != "https":
+        return f"scheme {parsed.scheme!r} not allowed (https only)"
+    host = (parsed.hostname or "").lower()
+    if host not in _ALLOWED_HOSTS:
+        return f"host {host!r} not in allowlist {sorted(_ALLOWED_HOSTS)}"
+    return None
 
 
 def _load_json_file(path: Path) -> object:
@@ -34,6 +61,9 @@ def _load_json_file(path: Path) -> object:
 
 
 def _fetch_url(url: str) -> str:
+    reason = _check_url_allowed(url)
+    if reason is not None:
+        _die(f"refusing to fetch {url}: {reason}")
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310
             return resp.read().decode("utf-8")
@@ -134,10 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="emit a machine-readable JSON result instead of plain text")
 
-    p.add_argument("--verify-signature", action="store_true",
+    p.add_argument("--no-verify-signature", action="store_true",
                    help=(
-                       "also verify the claim's Ed25519 signature against the producer key "
-                       "registry (requires 'cryptography' package; see --producers-dir)"
+                       "DANGEROUS: skip verifying the claim's Ed25519 signature and "
+                       "report success on Merkle inclusion alone. Inclusion proves the "
+                       "claim was anchored, NOT that the named producer signed it."
                    ))
     p.add_argument("--producers-dir", default=None, metavar="DIR",
                    help=(
@@ -183,29 +214,59 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    if args.verify_signature:
-        from trace_verify._signature import load_producer_key, verify_claim_signature
+    if args.no_verify_signature:
+        # Loud warning: inclusion alone does not prove producer authenticity.
+        print(
+            "WARNING: --no-verify-signature is set. This checks Merkle inclusion "
+            "ONLY and does NOT verify that the named producer signed this claim. "
+            "Anyone who can get a claim anchored can forge the producer identity.",
+            file=sys.stderr,
+        )
+    else:
+        from trace_verify._signature import is_valid_producer_id, load_producer_key, verify_claim_signature
 
         producers_dir = Path(args.producers_dir) if args.producers_dir else Path("producers")
-        producer_id = claim.get("producer") if isinstance(claim, dict) else None
+        # Resolve the producer identity: prefer the claim's own 'producer'
+        # field, falling back to the producer named in the anchored registry
+        # entry (claim bodies are not required to carry a top-level producer).
+        producer_id = None
+        if isinstance(claim, dict):
+            producer_id = claim.get("producer")
         if not producer_id:
-            _die("claim has no 'producer' field; cannot look up signing key")
+            producer_id = entry.get("producer")
+        if not producer_id:
+            _die(
+                "cannot determine producer for signature verification; "
+                "no 'producer' field in claim or registry entry "
+                "(pass --no-verify-signature to skip, at your own risk)",
+                code=1,
+            )
+        if not is_valid_producer_id(producer_id):
+            _die(f"invalid producer id {producer_id!r}", code=1)
 
         key_entry = load_producer_key(producer_id, producers_dir)
         if key_entry is None:
+            # Fail closed: no registered key means we cannot establish that the
+            # named producer actually signed this claim.
             _die(
                 f"no key file found for producer {producer_id!r} in {producers_dir}; "
-                "register the producer first"
+                "cannot verify signature (register the producer, or pass "
+                "--no-verify-signature to skip at your own risk)",
+                code=1,
             )
 
+        jwk = key_entry.get("public_key_jwk")
+        if not isinstance(jwk, dict):
+            _die(f"key file for {producer_id!r} has no public_key_jwk", code=1)
+
         try:
-            sig_result = verify_claim_signature(claim, key_entry["public_key_jwk"])
+            sig_result = verify_claim_signature(claim, jwk)
         except (ImportError, ValueError) as exc:
             if args.as_json:
                 print(json.dumps({"verified": False, "signature_valid": False, "error": str(exc)}))
             else:
                 print(f"error: {exc}", file=sys.stderr)
-            return 2
+            return 1
 
         if not sig_result:
             ok = False

@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 from aggregator._core import TRACEAggregator
 
@@ -75,6 +74,17 @@ class AggregatorHandler(BaseHTTPRequestHandler):
             return
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
+            return
+
+        # Fail-closed: claims whose producer is not a registered, signature-
+        # verified key are rejected by the aggregator and never anchored.
+        rejected = [r for r in results if r.get("rejected")]
+        if rejected:
+            self._send_json(422, {
+                "error": "one or more claims rejected: unregistered producer "
+                         "or signature verification failed",
+                "rejected": rejected,
+            })
             return
 
         batch_id = results[0]["batch_id"] if results else None
