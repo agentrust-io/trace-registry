@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trace-verify"
-version = "0.1.0"
+version = "0.2.0"
 description = "Verify TRACE claim inclusion proofs against the public registry"
 readme = "README.md"
 license = { text = "CC-BY-4.0" }
