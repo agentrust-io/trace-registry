@@ -18,7 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 import validate_registry  # noqa: E402
-import check_append_only  # noqa: E402
 
 
 VALID_ENTRY = {

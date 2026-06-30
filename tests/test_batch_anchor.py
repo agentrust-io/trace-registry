@@ -224,11 +224,14 @@ class TestMoveToProcessed(unittest.TestCase):
 
 class TestMainCLI(unittest.TestCase):
     def _run_main(self, staging_dir, registry_dir, proofs_dir, extra_args=None):
+        # These tests exercise the pipeline mechanics, not the signature
+        # policy (covered by TestSignatureGate), so signatures are not verified.
         argv = [
             "--staging-dir", str(staging_dir),
             "--registry-dir", str(registry_dir),
             "--proofs-dir", str(proofs_dir),
             "--ts", "2026-06-22T00:00:00Z",
+            "--no-verify-signatures",
         ] + (extra_args or [])
         captured = StringIO()
         with patch("sys.stdout", captured):
@@ -308,6 +311,103 @@ class TestMainCLI(unittest.TestCase):
         self.assertEqual(len(report["batches"]), 2)
         producers = {b["producer"] for b in report["batches"]}
         self.assertEqual(producers, {"prod-a/1.0.0", "prod-b/1.0.0"})
+
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+
+
+def _signed_claim(priv, producer, tag="a"):
+    import base64
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from trace_verify._signature import canonical_body_bytes
+    body = {"fmt": 1, "producer": producer, "ts": "2026-06-22T00:00:00Z",
+            "hash": "sha256:" + ("0" * 63 + tag)}
+    sig = priv.sign(canonical_body_bytes(body))
+    return {**body, "signature": base64.urlsafe_b64encode(sig).rstrip(b"=").decode()}
+
+
+def _write_producer_key(producers_dir: Path, producer, priv):
+    import base64
+    producers_dir.mkdir(parents=True, exist_ok=True)
+    x = base64.urlsafe_b64encode(
+        priv.public_key().public_bytes_raw()
+    ).rstrip(b"=").decode()
+    entry = {
+        "producer_id": producer,
+        "key_type": "Ed25519",
+        "public_key_jwk": {"kty": "OKP", "crv": "Ed25519", "x": x},
+        "active_since": "2026-06-01T00:00:00Z",
+        "contact": "test@example.com",
+    }
+    (producers_dir / (producer.replace("/", "-") + ".json")).write_text(
+        json.dumps(entry), encoding="utf-8"
+    )
+
+
+@unittest.skipUnless(HAS_CRYPTOGRAPHY, "cryptography package not installed")
+class TestSignatureGate(unittest.TestCase):
+    """Fail-closed: batch_anchor verifies producer signatures by default."""
+
+    def _run(self, staging, registry, proofs, producers, extra=None):
+        argv = [
+            "--staging-dir", str(staging),
+            "--registry-dir", str(registry),
+            "--proofs-dir", str(proofs),
+            "--producers-dir", str(producers),
+            "--ts", "2026-06-22T00:00:00Z",
+            "--json",
+        ] + (extra or [])
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            rc = batch_anchor.main(argv)
+        return rc, json.loads(captured.getvalue())
+
+    def test_accepts_signed_claim(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            staging, incoming, _ = _make_staging(tmp)
+            producers = tmp / "producers"
+            _write_producer_key(producers, "good/1.0.0", priv)
+            _write_claim(incoming, "c1.json", _signed_claim(priv, "good/1.0.0"))
+            rc, report = self._run(staging, tmp / "registry", tmp / "proofs", producers)
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["batches"][0]["status"], "anchored")
+
+    def test_rejects_unknown_producer(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            staging, incoming, _ = _make_staging(tmp)
+            producers = tmp / "producers"
+            producers.mkdir()
+            _write_claim(incoming, "c1.json", _signed_claim(priv, "unknown/1.0.0"))
+            registry = tmp / "registry"
+            rc, report = self._run(staging, registry, tmp / "proofs", producers)
+        self.assertEqual(rc, 1)
+        self.assertEqual(report["batches"][0]["status"], "rejected")
+        self.assertFalse(registry.exists())
+
+    def test_rejects_bad_signature(self):
+        priv = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            staging, incoming, _ = _make_staging(tmp)
+            producers = tmp / "producers"
+            _write_producer_key(producers, "good/1.0.0", priv)
+            claim = _signed_claim(priv, "good/1.0.0")
+            claim["hash"] = "sha256:" + "f" * 64  # tamper after signing
+            _write_claim(incoming, "c1.json", claim)
+            registry = tmp / "registry"
+            rc, report = self._run(staging, registry, tmp / "proofs", producers)
+        self.assertEqual(rc, 1)
+        self.assertEqual(report["batches"][0]["status"], "rejected")
+        self.assertFalse(registry.exists())
 
 
 if __name__ == "__main__":

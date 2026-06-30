@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -177,6 +176,28 @@ class TestLoadProducerKey(unittest.TestCase):
             bad.write_text("{not json", encoding="utf-8")
             result = load_producer_key("broken/1.0.0", Path(tmpdir))
         self.assertIsNone(result)
+
+    def test_rejects_path_traversal_producer_id(self):
+        """Fix #4: a traversal-y producer id must not escape producers_dir."""
+        from trace_verify._signature import is_valid_producer_id, load_producer_key
+        for bad in (
+            "../../../../etc/passwd",
+            "..\\..\\windows\\system32",
+            "../secret/1.0.0",
+            "a/b/../../1.0.0",
+            "/abs/1.0.0",
+            "name/1.0.0/../../x",
+        ):
+            with self.subTest(producer_id=bad):
+                self.assertFalse(is_valid_producer_id(bad))
+                # Even if an attacker-controlled file existed, load returns None
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    self.assertIsNone(load_producer_key(bad, Path(tmpdir)))
+
+    def test_accepts_valid_producer_id(self):
+        from trace_verify._signature import is_valid_producer_id
+        self.assertTrue(is_valid_producer_id("cmcp-gateway/0.1.0"))
+        self.assertTrue(is_valid_producer_id("acme.thing_2/10.20.30-rc1"))
 
 
 if __name__ == "__main__":

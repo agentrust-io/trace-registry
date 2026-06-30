@@ -85,6 +85,8 @@ class TRACEAggregator:
         max_batch_size: int = 0,
         git_commit: bool = False,
         git_cwd: Path | None = None,
+        producers_dir: Path | None = None,
+        verify_signatures: bool = True,
     ) -> None:
         self._registry_dir = registry_dir
         self._proofs_dir = proofs_dir
@@ -92,6 +94,8 @@ class TRACEAggregator:
         self._max_batch_size = max_batch_size
         self._git_commit = git_commit
         self._git_cwd = git_cwd or registry_dir.parent
+        self._producers_dir = producers_dir or (registry_dir.parent / "producers")
+        self._verify_signatures = verify_signatures
 
         # Protected by _cond
         self._pending: list[tuple[str, dict]] = []  # (job_id, claim)
@@ -185,6 +189,19 @@ class TRACEAggregator:
             groups.setdefault(producer, []).append((jid, claim))
 
         for producer, group in groups.items():
+            # Fail-closed: verify every claim's signature against the producer's
+            # registered key before anchoring. Reject the whole group if the
+            # producer has no active registered key, or any claim's signature
+            # does not verify. Rejected claims are reported back to submit()
+            # so callers are not left waiting, but nothing is anchored for them.
+            if self._verify_signatures:
+                rejection = self._reject_reason(producer, group)
+                if rejection is not None:
+                    for jid, _ in group:
+                        completed[jid] = {"rejected": True, "reason": rejection,
+                                          "producer": producer}
+                    continue
+
             job_ids = [jid for jid, _ in group]
             claims = [c for _, c in group]
             b_id = _batch_id(claims)
@@ -215,10 +232,29 @@ class TRACEAggregator:
                 completed[jid] = result
                 proof_index[(b_id, i)] = {"leaf_index": i, "audit_path": paths[i]}
 
-        if self._git_commit and completed:
-            self._do_git_commit(ts, len(completed))
+        if self._git_commit and any(
+            not r.get("rejected") for r in completed.values()
+        ):
+            self._do_git_commit(ts, sum(
+                1 for r in completed.values() if not r.get("rejected")
+            ))
 
         return completed, proof_index
+
+    def _reject_reason(
+        self, producer: str, group: list[tuple[str, dict]]
+    ) -> str | None:
+        """Return None if every claim in the group verifies against the
+        producer's registered key, else a string reason for rejection."""
+        from trace_verify._signature import verify_claim_against_registry
+
+        for _, claim in group:
+            ok, reason = verify_claim_against_registry(
+                claim, producer, self._producers_dir
+            )
+            if not ok:
+                return reason
+        return None
 
     def _write_registry_entry(self, entry: dict, ts: str) -> None:
         date_parts = ts[:10].split("-")

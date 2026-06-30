@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -34,16 +35,57 @@ MIRRORS_JSON = REPO_ROOT / "mirrors.json"
 
 UA = "trace-registry/check-mirrors (github.com/agentrust-io/trace-registry)"
 
+# SSRF guard: even though mirrors.json is repo-controlled, enforce https and a
+# host allowlist before fetching. The allowlist always includes the GitHub API
+# hosts and is extended at runtime with the hosts already configured in
+# mirrors.json. file://, http://, and internal/metadata targets are rejected.
+_BASE_ALLOWED_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
 
-def _fetch_json(url: str, timeout: int) -> dict:
+
+def _host_of(url: str) -> str:
+    return (urllib.parse.urlparse(url).hostname or "").lower()
+
+
+def _allowed_hosts_from_config(config: dict) -> frozenset:
+    hosts = set(_BASE_ALLOWED_HOSTS)
+    entries = [config.get("canonical", {})] + list(config.get("mirrors", []))
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        api = entry.get("head_api")
+        if isinstance(api, str) and urllib.parse.urlparse(api).scheme == "https":
+            host = _host_of(api)
+            if host:
+                hosts.add(host)
+    return frozenset(hosts)
+
+
+def _check_url_allowed(url: str, allowed_hosts: frozenset) -> str | None:
+    """Return None if url is safe to fetch, else a rejection reason."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:
+        return f"cannot parse URL: {exc}"
+    if parsed.scheme != "https":
+        return f"scheme {parsed.scheme!r} not allowed (https only)"
+    host = (parsed.hostname or "").lower()
+    if host not in allowed_hosts:
+        return f"host {host!r} not in allowlist {sorted(allowed_hosts)}"
+    return None
+
+
+def _fetch_json(url: str, timeout: int, allowed_hosts: frozenset) -> dict:
+    reason = _check_url_allowed(url, allowed_hosts)
+    if reason is not None:
+        raise ValueError(f"refusing to fetch {url}: {reason}")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _get_head_sha(api_url: str, timeout: int) -> str:
+def _get_head_sha(api_url: str, timeout: int, allowed_hosts: frozenset) -> str:
     """Fetch the HEAD commit SHA from a mirror's API endpoint."""
-    data = _fetch_json(api_url, timeout)
+    data = _fetch_json(api_url, timeout, allowed_hosts)
     sha = data.get("sha")
     if not isinstance(sha, str) or len(sha) < 7:
         raise ValueError(f"unexpected response shape: {list(data.keys())}")
@@ -61,7 +103,7 @@ def _load_mirrors() -> dict:
         sys.exit(2)
 
 
-def _check_one(entry: dict, canonical_sha: str, timeout: int) -> dict:
+def _check_one(entry: dict, canonical_sha: str, timeout: int, allowed_hosts: frozenset) -> dict:
     name = entry.get("name", entry.get("github", "unknown"))
     api_url = entry.get("head_api", "")
     result: dict = {"name": name, "api_url": api_url}
@@ -71,7 +113,7 @@ def _check_one(entry: dict, canonical_sha: str, timeout: int) -> dict:
         return result
 
     try:
-        mirror_sha = _get_head_sha(api_url, timeout)
+        mirror_sha = _get_head_sha(api_url, timeout, allowed_hosts)
     except urllib.error.URLError as exc:
         result.update({"status": "unreachable", "detail": str(exc)})
         return result
@@ -109,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     config = _load_mirrors()
     canonical = config.get("canonical", {})
     mirrors = config.get("mirrors", [])
+    allowed_hosts = _allowed_hosts_from_config(config)
 
     if not mirrors:
         msg = "no mirrors registered in mirrors.json; nothing to check"
@@ -136,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        canonical_sha = _get_head_sha(canonical_api, args.timeout)
+        canonical_sha = _get_head_sha(canonical_api, args.timeout, allowed_hosts)
     except (urllib.error.URLError, ValueError) as exc:
         msg = f"cannot reach canonical repo API: {exc}"
         if args.as_json:
@@ -145,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {msg}", file=sys.stderr)
         return 1
 
-    results = [_check_one(m, canonical_sha, args.timeout) for m in mirrors]
+    results = [_check_one(m, canonical_sha, args.timeout, allowed_hosts) for m in mirrors]
 
     failures = [r for r in results if r["status"] != "in_sync"]
 

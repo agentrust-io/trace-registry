@@ -91,7 +91,11 @@ class TestCLIWithFiles(unittest.TestCase):
         return p
 
     def _run(self, *args: str) -> int:
-        return main(list(args))
+        # These tests cover inclusion-proof mechanics with synthetic claims
+        # that are not signed by a registered producer, so signature
+        # verification is disabled. The default-on signature gate is covered by
+        # TestSignatureDefault and by test_committed_sample_verifies.
+        return main(list(args) + ["--no-verify-signature"])
 
     def test_valid_claim_exits_0(self):
         with tempfile.TemporaryDirectory() as d:
@@ -203,7 +207,9 @@ class TestCLIWithFiles(unittest.TestCase):
                 rc = self._run(
                     "--claim", str(self._write(tmp, "claim.json", claim)),
                     "--proof", str(self._write(tmp, "proof.json", proof)),
-                    "--entry-url", "https://example.com/12.ndjson",
+                    # allowlisted host; arbitrary hosts are rejected by the SSRF guard
+                    "--entry-url",
+                    "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/registry/12.ndjson",
                 )
             self.assertEqual(rc, 0)
 
@@ -218,6 +224,75 @@ class TestCLIWithFiles(unittest.TestCase):
             "--entry", str(registry),
         )
         self.assertEqual(rc, 0)
+
+
+class TestSignatureDefault(unittest.TestCase):
+    """Fix #2: signature verification is on by default and fails closed."""
+
+    def _write(self, tmp: Path, name: str, obj: object) -> Path:
+        p = tmp / name
+        p.write_text(json.dumps(obj), encoding="utf-8")
+        return p
+
+    def test_missing_producer_key_fails_closed_by_default(self):
+        # No --no-verify-signature: a claim whose producer has no registered
+        # key must NOT report OK; it must exit non-zero.
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = _make_claim(0)
+            _, entry, proof = _anchor_one(claim)  # producer test-gateway/0.1.0
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            argv = [
+                "--claim", str(self._write(tmp, "claim.json", claim)),
+                "--proof", str(self._write(tmp, "proof.json", proof)),
+                "--entry", str(ndjson),
+                "--producers-dir", str(tmp / "no-such-producers"),
+            ]
+            # main() fails closed via _die() (sys.exit non-zero) when the
+            # producer key is absent; it must never return 0 / print OK.
+            with self.assertRaises(SystemExit) as ctx:
+                main(argv)
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_no_verify_signature_opt_out_warns_and_passes(self):
+        import io
+        from contextlib import redirect_stderr
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = _make_claim(0)
+            _, entry, proof = _anchor_one(claim)
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = main([
+                    "--claim", str(self._write(tmp, "claim.json", claim)),
+                    "--proof", str(self._write(tmp, "proof.json", proof)),
+                    "--entry", str(ndjson),
+                    "--no-verify-signature",
+                ])
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNING", err.getvalue())
+
+
+class TestSSRFGuard(unittest.TestCase):
+    """Fix #3: --entry-url only fetches https from the host allowlist."""
+
+    def test_rejects_non_https_scheme(self):
+        from trace_verify.__main__ import _check_url_allowed
+        self.assertIsNotNone(_check_url_allowed("http://api.github.com/x"))
+        self.assertIsNotNone(_check_url_allowed("file:///etc/passwd"))
+
+    def test_rejects_non_allowlisted_host(self):
+        from trace_verify.__main__ import _check_url_allowed
+        self.assertIsNotNone(_check_url_allowed("https://evil.example.com/x"))
+        self.assertIsNotNone(_check_url_allowed("https://169.254.169.254/latest/meta-data"))
+
+    def test_allows_allowlisted_https_host(self):
+        from trace_verify.__main__ import _check_url_allowed
+        self.assertIsNone(_check_url_allowed("https://raw.githubusercontent.com/a/b/c"))
+        self.assertIsNone(_check_url_allowed("https://api.github.com/repos/x/commits/HEAD"))
 
 
 class TestCLIParser(unittest.TestCase):

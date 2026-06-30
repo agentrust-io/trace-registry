@@ -9,7 +9,7 @@ import unittest
 import urllib.error
 from io import StringIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
@@ -47,7 +47,7 @@ def _mirror_entry(name="TestMirror", github="test-org/trace-registry-mirror", sh
 
 def _make_fetch_side_effect(canonical_sha, mirror_shas: dict):
     """Return a side_effect fn for _fetch_json that resolves by URL."""
-    def side_effect(url, timeout):
+    def side_effect(url, timeout, allowed_hosts=None):
         if "agentrust-io/trace-registry" in url:
             return {"sha": canonical_sha}
         for github, sha in mirror_shas.items():
@@ -144,7 +144,7 @@ class TestMirrorCheck(unittest.TestCase):
         orig = check_mirrors.MIRRORS_JSON
         check_mirrors.MIRRORS_JSON = tmp
 
-        def fetch_side(url, timeout):
+        def fetch_side(url, timeout, allowed_hosts=None):
             if "agentrust-io" in url:
                 return {"sha": CANONICAL_SHA}
             raise urllib.error.URLError("connection refused")
@@ -171,7 +171,7 @@ class TestMirrorCheck(unittest.TestCase):
         check_mirrors.MIRRORS_JSON = tmp
         captured = StringIO()
 
-        def fetch_side(url, timeout):
+        def fetch_side(url, timeout, allowed_hosts=None):
             return {"sha": CANONICAL_SHA}
 
         try:
@@ -200,7 +200,7 @@ class TestMirrorCheck(unittest.TestCase):
         check_mirrors.MIRRORS_JSON = tmp
         captured = StringIO()
 
-        def fetch_side(url, timeout):
+        def fetch_side(url, timeout, allowed_hosts=None):
             if "agentrust-io" in url:
                 return {"sha": CANONICAL_SHA}
             return {"sha": MIRROR_SHA_BEHIND}
@@ -231,21 +231,53 @@ class TestMirrorCheck(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+class TestSSRFGuard(unittest.TestCase):
+    """Fix #3: head_api fetches are restricted to https + a host allowlist."""
+
+    def test_check_url_allowed_rejects_scheme_and_host(self):
+        allowed = frozenset({"api.github.com"})
+        self.assertIsNotNone(check_mirrors._check_url_allowed("http://api.github.com/x", allowed))
+        self.assertIsNotNone(check_mirrors._check_url_allowed("file:///etc/passwd", allowed))
+        self.assertIsNotNone(check_mirrors._check_url_allowed("https://169.254.169.254/x", allowed))
+        self.assertIsNotNone(check_mirrors._check_url_allowed("https://evil.example.com/x", allowed))
+        self.assertIsNone(check_mirrors._check_url_allowed("https://api.github.com/x", allowed))
+
+    def test_allowlist_extended_from_config(self):
+        config = _fake_mirrors_json([
+            _mirror_entry("M", "org/m"),  # head_api on api.github.com
+            {"name": "Custom", "head_api": "https://mirror.example.org/commits/HEAD"},
+        ])
+        hosts = check_mirrors._allowed_hosts_from_config(config)
+        self.assertIn("api.github.com", hosts)
+        self.assertIn("mirror.example.org", hosts)
+        self.assertNotIn("evil.example.com", hosts)
+
+    def test_fetch_json_refuses_disallowed_url(self):
+        with self.assertRaises(ValueError):
+            check_mirrors._fetch_json(
+                "http://api.github.com/x", 5, frozenset({"api.github.com"})
+            )
+        with self.assertRaises(ValueError):
+            check_mirrors._fetch_json(
+                "https://evil.example.com/x", 5, frozenset({"api.github.com"})
+            )
+
+
 class TestGetHeadSha(unittest.TestCase):
     def test_full_sha(self):
         with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "a" * 40}):
-            sha = check_mirrors._get_head_sha("https://example.com", 5)
+            sha = check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
         self.assertEqual(sha, "a" * 40)
 
     def test_missing_sha_raises(self):
         with patch.object(check_mirrors, "_fetch_json", return_value={"commit": {}}):
             with self.assertRaises(ValueError):
-                check_mirrors._get_head_sha("https://example.com", 5)
+                check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
 
     def test_too_short_sha_raises(self):
         with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "abc"}):
             with self.assertRaises(ValueError):
-                check_mirrors._get_head_sha("https://example.com", 5)
+                check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
 
 
 if __name__ == "__main__":
