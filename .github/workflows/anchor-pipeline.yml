@@ -22,12 +22,13 @@ concurrency:
 
 permissions:
   contents: write  # needed to push the commit
+  id-token: write  # needed for keyless (Sigstore gitsign) commit signing
 
 jobs:
   anchor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
@@ -69,7 +70,22 @@ jobs:
           cat pipeline-report.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Commit anchored batches
+      - name: Install and configure gitsign (keyless commit signing)
+        if: steps.pipeline.outputs.anchored_count != '0'
+        env:
+          GITSIGN_VERSION: "0.16.1"
+          GITSIGN_SHA256: "4a29a1f4b9add1f0f6d9a3e9e6ba0cffa121b971be82d62bb1496d7d1d877b0a"
+        run: |
+          set -euo pipefail
+          url="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          curl -fsSL "$url" -o /tmp/gitsign
+          echo "${GITSIGN_SHA256}  /tmp/gitsign" | sha256sum -c -
+          sudo install -m 0755 /tmp/gitsign /usr/local/bin/gitsign
+          git config --local gpg.x509.program gitsign
+          git config --local gpg.format x509
+          git config --local commit.gpgsign true
+
+      - name: Commit anchored batches (signed)
         if: steps.pipeline.outputs.anchored_count != '0'
         run: |
           set -euo pipefail
@@ -81,7 +97,23 @@ jobs:
           BATCH_COUNT="${{ steps.pipeline.outputs.anchored_count }}"
           TS=$(python -c "import json; r=json.load(open('pipeline-report.json')); print(r['ts'])")
 
-          git commit -m "chore(pipeline): anchor ${BATCH_COUNT} batch(es) at ${TS} [skip ci]"
+          # Keyless Sigstore signature; identity is bound to this workflow's OIDC
+          # token and logged to Rekor.
+          git commit -S -m "chore(pipeline): anchor ${BATCH_COUNT} batch(es) at ${TS} [skip ci]"
+
+      - name: Verify anchor commit signature (fail closed)
+        if: steps.pipeline.outputs.anchored_count != '0'
+        env:
+          # The keyless certificate identity is this workflow's ref URI.
+          CERT_IDENTITY: "https://github.com/${{ github.repository }}/.github/workflows/anchor-pipeline.yml@${{ github.ref }}"
+          CERT_OIDC_ISSUER: "https://token.actions.githubusercontent.com"
+        run: |
+          set -euo pipefail
+          # An unsigned or unverifiable anchor commit must never reach main.
+          gitsign verify \
+            --certificate-identity="${CERT_IDENTITY}" \
+            --certificate-oidc-issuer="${CERT_OIDC_ISSUER}" \
+            HEAD
 
       - name: Push
         if: steps.pipeline.outputs.anchored_count != '0'
