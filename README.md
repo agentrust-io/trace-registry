@@ -12,11 +12,14 @@ hashes that auditors and mirrors have already observed.
 
 ## Current Registry State
 
-The registry currently contains one development entry (registry/2026/06/12.ndjson).
-This is a software-only example anchor with advisory enforcement and a zeroed
-measurement, committed as a launch-day example. It does not represent a production
-Trust Record. The first production entries will be added after Confidential Computing
-Summit launch on June 23, 2026.
+The registry currently contains **one** entry (`registry/2026/06/12.ndjson`). It is
+a software-only example anchor with advisory enforcement and a zeroed measurement,
+committed as a launch-day example. It does not represent a production Trust Record,
+and no production entries have been anchored yet.
+
+The anchoring pipeline is live and runs on a schedule, verifying producer signatures
+before it anchors anything. A scheduled run with nothing to anchor is a no-op, so the
+gap since June reflects claim volume rather than a stalled pipeline.
 
 The anchor construction (canonical claim bytes, leaf hashing, RFC 6962 Merkle
 tree, inclusion proofs) is specified in
@@ -25,10 +28,10 @@ verifier from that document alone; the reference tools in [tools/](tools/) are
 one implementation.
 
 > **Status.** The format, reference tooling, schema validation, and a first
-> real entry ([registry/2026/06/12.ndjson](registry/2026/06/12.ndjson)) are
-> live. Anchoring is currently manual and low volume; a continuous anchoring
-> cadence and a packaged `trace-verify` CLI on PyPI are planned but not yet
-> operational.
+> real entry ([registry/2026/06/12.ndjson](registry/2026/06/12.ndjson)) are live.
+> Scheduled anchoring is operational and `trace-verify` is published on PyPI. What
+> is missing is volume: one entry, one producer, and no mirror we do not operate.
+> See [ROADMAP.md](ROADMAP.md) for what that means and what would change it.
 
 ## Why this exists
 

@@ -1,0 +1,12 @@
+TRACE Registry
+Copyright 2026 AgenTrust Contributors
+
+This product includes software and data developed by the AgenTrust community
+(https://github.com/agentrust-io).
+
+The registry data under registry/, the schemas under schema/, and the
+documentation under docs/ are published as a public accountability record.
+
+Portions of this project were initially developed by OPAQUE Systems, which also
+operates a producer that anchors into this registry. See GOVERNANCE.md for how
+that conflict of interest is addressed.
