@@ -1,0 +1,18 @@
+# Default owners for everything.
+* @agentrust-io/opaque-lt
+
+# The registry itself is append-only and is the product. Any change here needs
+# owner review, including one that only looks like a reformat: rewriting a
+# published entry diverges the commit hashes mirrors have already observed,
+# which is the tamper-evidence this repository exists to provide.
+/registry/ @agentrust-io/opaque-lt
+/schema/ @agentrust-io/opaque-lt
+
+# Anchor format and verification semantics: a change here can invalidate proofs
+# third parties already hold.
+/docs/anchor-format.md @agentrust-io/opaque-lt
+/src/ @agentrust-io/opaque-lt
+/tools/ @agentrust-io/opaque-lt
+
+# CI, publishing, and governance.
+/.github/ @agentrust-io/opaque-lt

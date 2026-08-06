@@ -14,7 +14,6 @@ keywords = ["trace", "merkle", "inclusion-proof", "audit", "ai-governance"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
