@@ -1,4 +1,4 @@
-[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0_(code)_%2F_CC_BY_4.0_(data)-lightgrey.svg)](LICENSE)
 [![TRACE Spec](https://img.shields.io/badge/TRACE-Spec_v0.1-0ea5e9)](https://github.com/agentrust-io/trace-spec)
 [![Discord](https://dcbadge.limes.pink/api/server/9JWNpH7E?style=flat)](https://discord.gg/9JWNpH7E)
 
@@ -102,4 +102,10 @@ Questions, feedback, integration help: [Discord](https://discord.gg/9JWNpH7E).
 
 ## License
 
-Creative Commons Attribution 4.0 International (CC BY 4.0). See [LICENSE](LICENSE).
+Dual: **Apache-2.0** for code (`src/`, `tools/`, `aggregator/`, `tests/`, `.github/`) and
+**CC BY 4.0** for registry data, proofs, schemas and documentation. See [LICENSE](LICENSE).
+
+The code was previously under CC BY 4.0, which Creative Commons itself recommends
+against for software: no patent grant, no software-tailored warranty disclaimer,
+and not OSI-approved. Mirroring this registry means running that code, so it needs
+a license written for software.
