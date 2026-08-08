@@ -7,7 +7,7 @@ name = "trace-verify"
 version = "0.2.0"
 description = "Verify TRACE claim inclusion proofs against the public registry"
 readme = "README.md"
-license = { text = "CC-BY-4.0" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 dependencies = ["cryptography>=41.0"]
 keywords = ["trace", "merkle", "inclusion-proof", "audit", "ai-governance"]

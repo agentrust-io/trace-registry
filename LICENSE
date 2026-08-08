@@ -1,6 +1,49 @@
-Creative Commons Attribution 4.0 International (CC BY 4.0)
+This repository uses a dual license, matching the sibling agentrust-io
+repositories: Apache-2.0 for code, CC BY 4.0 for the registry data, schemas,
+and documentation.
+
+CODE (src/, tools/, aggregator/, tests/, .github/)
+==================================================
+Apache License, Version 2.0
+https://www.apache.org/licenses/LICENSE-2.0
 
 Copyright 2026 AgenTrust Contributors
 
-This work is licensed under the Creative Commons Attribution 4.0 International License.
-To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+REGISTRY DATA, SCHEMAS, AND DOCUMENTATION
+==========================================
+(registry/, proofs/, schema/, producers/, samples/, docs/, and the
+Markdown files at the repository root)
+
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Copyright 2026 AgenTrust Contributors
+
+You are free to share and adapt this material for any purpose, including
+commercial, provided you give appropriate credit, link to the license, and
+indicate if changes were made.
+
+WHY THE SPLIT
+=============
+The repository was previously declared CC BY 4.0 in full, including the
+Python under src/, tools/, and aggregator/. Creative Commons explicitly
+recommends against CC licenses for software: they grant no patent rights,
+carry no software-tailored warranty disclaimer, and are not OSI-approved,
+which some corporate policies reject outright. Anyone who needs to mirror
+this registry has to run that code, so the code needs a license written for
+software.
+
+Registry entries, proofs, and schemas stay under CC BY 4.0. They are data
+and specification material, which is what CC BY is for.

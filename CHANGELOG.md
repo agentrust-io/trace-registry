@@ -12,6 +12,28 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **Licensing split: Apache-2.0 for code, CC BY 4.0 for registry data, schemas and
+  docs.** The repository declared CC BY 4.0 in full, including the Python under
+  `src/`, `tools/` and `aggregator/`. Creative Commons recommends against CC
+  licenses for software: no patent grant, no software-tailored warranty
+  disclaimer, and not OSI-approved, which some corporate policies reject outright.
+  Mirroring this registry means running that code, and an independent mirror is
+  the mechanism that makes the operator checkable, so the code has to carry a
+  licence a mirror operator's legal team will accept.
+
+  Done before publication deliberately. Relicensing needs contributor agreement,
+  and the contributor set only grows once a repository is public. It is clean
+  today: `git log --format='%an' -- src/ tools/ aggregator/` returns one human
+  author, plus dependabot for workflow bumps.
+
+  `trace-verify` 0.2.0 is on PyPI declaring `CC-BY-4.0` in its metadata. The
+  package metadata now says `Apache-2.0`; a republish is needed for the published
+  metadata to match.
+
+- `.gitignore` covers `dist/`, `*.egg-info/` and `.venv/`. It listed only
+  `__pycache__/`, so a local build of the package sat untracked-but-not-ignored,
+  one `git add -A` away from being committed.
+
 - Public-readiness pass: governance, maintainers, roadmap, this changelog,
   `NOTICE`, `CODEOWNERS`, Dependabot config, and issue/PR templates.
 
