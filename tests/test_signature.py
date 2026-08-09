@@ -202,3 +202,53 @@ class TestLoadProducerKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_CRYPTOGRAPHY, SKIP_MSG)
+class TestSignaturePreimageIsJCS(unittest.TestCase):
+    """The pre-image must be RFC 8785, not sorted-keys ASCII JSON (trace-spec#138).
+
+    trace-v0.2.md section 3.2.2 names json.dumps(sort_keys=True) as insufficient.
+    It agrees with JCS on ASCII and diverges on non-ASCII, so the old construction
+    verified non-ASCII records against bytes the producer never signed.
+
+    Note this is deliberately NOT the anchor-leaf canonicalization, which
+    docs/anchor-format.md section 1 defines as sorted-keys ASCII over the complete
+    signed claim. Two layers, two constructions, on purpose.
+    """
+
+    def test_matches_rfc8785_not_json_dumps(self):
+        import rfc8785
+        from trace_verify._signature import canonical_body_bytes
+
+        claim = {"producer": "acme/1.0.0", "note": "café", "signature": "x"}
+        body = {k: v for k, v in claim.items() if k != "signature"}
+        self.assertEqual(canonical_body_bytes(claim), rfc8785.dumps(body))
+        self.assertNotEqual(
+            canonical_body_bytes(claim),
+            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+                "ascii"
+            ),
+        )
+
+    def test_a_non_ascii_claim_signed_the_producer_way_verifies(self):
+        """The end-to-end case that was broken: producer signs JCS, we verify it."""
+        import rfc8785
+        from trace_verify._signature import canonical_body_bytes
+
+        priv, jwk = _make_keypair()
+        claim = {
+            "fmt": 1,
+            "producer": "test-producer/1.0.0",
+            "ts": "2026-06-22T00:00:00Z",
+            "hash": "abc123",
+            "subject": "Ünicode agent 日本語",
+        }
+        # Exactly what agentrust_trace.sign_record does: JCS over the body.
+        sig = priv.sign(rfc8785.dumps(claim))
+        signed = {**claim, "signature": base64.urlsafe_b64encode(sig).rstrip(b"=").decode()}
+
+        from trace_verify._signature import verify_claim_signature
+
+        self.assertTrue(verify_claim_signature(signed, jwk))
+        self.assertEqual(canonical_body_bytes(signed), rfc8785.dumps(claim))

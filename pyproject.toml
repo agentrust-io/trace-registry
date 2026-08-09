@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-signature = ["cryptography>=41.0"]
+signature = ["cryptography>=41.0", "rfc8785>=0.1.2"]
 
 [project.scripts]
 trace-verify = "trace_verify.__main__:main"
@@ -33,7 +33,11 @@ trace-verify = "trace_verify.__main__:main"
 [project.urls]
 Homepage = "https://github.com/agentrust-io/trace-registry"
 Documentation = "https://github.com/agentrust-io/trace-registry/blob/main/docs/anchor-format.md"
-"Bug Tracker" = "https://github.com/agentrust-io/trace-registry/issues"
+# trace-registry is a private repository, so its issue tracker returns 404 to
+# every reader of this package. Reports land on trace-spec, which is public and
+# is where the first external report of a trace-verify defect was filed after the
+# reader found nowhere else to put it (trace-spec#138).
+"Bug Tracker" = "https://github.com/agentrust-io/trace-spec/issues"
 Changelog = "https://github.com/agentrust-io/trace-registry/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
