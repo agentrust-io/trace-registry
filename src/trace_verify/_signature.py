@@ -50,12 +50,37 @@ def _require_cryptography():
         )
 
 
+def _require_rfc8785():
+    try:
+        import rfc8785
+    except ImportError:
+        raise ImportError(
+            "Signature verification requires the 'rfc8785' package, because the "
+            "signature pre-image is RFC 8785 JCS and nothing else reproduces it. "
+            "Install it with: pip install \"trace-verify[signature]\""
+        )
+    return rfc8785
+
+
 def canonical_body_bytes(claim: dict) -> bytes:
-    """Canonical JSON bytes of the claim body (all fields except 'signature')."""
+    """RFC 8785 JCS bytes of the claim body (all fields except 'signature').
+
+    This is the *signature* pre-image, and it is not the same canonicalization as
+    :func:`trace_verify._verify.canonical_claim_bytes`, which is the anchor leaf.
+    The two layers are described in ``registry-anchor-v1.md`` section 0 and they
+    differ on purpose: the anchor leaf is defined by ``docs/anchor-format.md``
+    section 1 as sorted-keys ASCII JSON over the complete signed claim, while the
+    signature pre-image is governed by ``trace-v0.2.md`` section 3.2.2 and must be
+    JCS, because that is what the producer signed.
+
+    This function used ``json.dumps(sort_keys=True, ...)``, which section 3.2.2
+    names as insufficient. It agrees with JCS on ASCII and diverges on non-ASCII
+    strings, so a Trust Record carrying any non-ASCII text was verified against
+    bytes the producer never signed.
+    """
+    rfc8785 = _require_rfc8785()
     body = {k: v for k, v in claim.items() if k != "signature"}
-    return json.dumps(
-        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
+    return rfc8785.dumps(body)
 
 
 def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
