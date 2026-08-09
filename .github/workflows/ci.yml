@@ -22,7 +22,11 @@ jobs:
         run: pip install jsonschema==4.26.0 hatchling
 
       - name: Install trace-verify package (editable)
-        run: pip install -e .
+        # The signature extra, not the bare package: the pre-image is RFC 8785
+        # and verify_signature now refuses to guess at it rather than falling
+        # back to a canonicalization that only agrees on ASCII. Without the
+        # extra the smoke test below exercises a path that hard-fails by design.
+        run: pip install -e ".[signature]"
 
       - name: Smoke-test trace-verify CLI
         run: |
