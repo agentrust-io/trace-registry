@@ -39,6 +39,17 @@ Two different things are versioned here and they move independently:
 
 ## trace-verify
 
+### 0.3.0
+
+- **The signature pre-image is now RFC 8785 (JCS). Published 0.2.0 verified non-ASCII records against bytes the producer never signed.** `canonical_body_bytes` built the pre-image with `json.dumps(sort_keys=True, ensure_ascii=True)` while `agentrust_trace.sign_record` signs through `rfc8785.dumps`. The two agree on ASCII and diverge everywhere else, so signer and verifier were computing different bytes for any record carrying an accented character, a non-Latin script, or an emoji.
+
+  **The failure mode is rejection, not acceptance.** A record whose bytes the verifier reconstructs differently fails its signature check, so 0.2.0 rejected valid records; it did not accept invalid ones. No advisory, because nothing was forgeable through this. It was still wrong in the one function whose whole job is reproducing what a producer signed.
+
+  **Behaviour change, which is why this is 0.3.0 rather than 0.2.1.** Signature verification now *refuses* rather than guessing when `rfc8785` is unavailable: `pip install "trace-verify[signature]"`. Falling back to a canonicalization that only agrees on ASCII is how the defect shipped in the first place, so the fallback is gone and the error says what to install.
+
+  Scope is one function, deliberately. Four other `json.dumps(sort_keys=True, ...)` sites in this repository are correct: the **anchor leaf** is defined as sorted-key JSON by `docs/anchor-format.md` §1 and must not move. The two canonicalizations at two layers are the trap that document's §0 exists to name, and fixing the wrong one would have created the very bug it warns about.
+
+
 ### 0.2.0
 - Producer signatures are **verified before anchoring**, and verification is on by
   default rather than opt-in. Adds an SSRF allowlist for producer key fetching.
