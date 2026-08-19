@@ -9,6 +9,35 @@ The construction follows [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962)
 from this document alone; the reference tools in [`tools/`](../tools/) are one
 implementation, not the definition.
 
+## 0. Two digest contexts, not one
+
+TRACE uses two different canonicalizations over the Trust Record object family.
+They are separately versioned digest contexts and MUST NOT be substituted for
+one another:
+
+| Context | Input | Canonicalization | Digest use |
+|---|---|---|---|
+| Trust Record signature | Complete record with only `signature` removed | RFC 8785 (JCS), per TRACE v0.2 §3.2.2 | Signature pre-image |
+| Registry anchor leaf v1 | Complete signed record, `signature` included | Sorted-key ASCII JSON defined in §1 | `SHA-256(0x00 || canonical_claim_bytes)` |
+
+The two serializations agree for records whose keys and strings are ASCII and
+whose numbers are integers. That agreement is not an equivalence rule. They
+diverge at least at these boundaries:
+
+- RFC 8785 emits non-ASCII characters; Anchor Format v1 escapes them and emits
+  ASCII bytes.
+- RFC 8785 applies ECMAScript number serialization; Anchor Format v1 excludes
+  non-integer numbers.
+- RFC 8785 orders object keys by UTF-16 code units; Anchor Format v1 orders them
+  by Unicode code point.
+
+A verifier MUST use the canonicalization declared for the context it is
+checking. Reusing the signing canonicalizer for an anchor leaf, or the anchor
+serializer for a signature pre-image, is non-conforming even when a particular
+record happens to produce identical bytes. The public companion specification
+states the same boundary in
+[`trace-spec/spec/registry-anchor-v1.md`](https://github.com/agentrust-io/trace-spec/blob/main/spec/registry-anchor-v1.md).
+
 ## 1. Canonical claim bytes
 
 The unit of anchoring is the COMPLETE signed claim object, signature included.
