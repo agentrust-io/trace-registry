@@ -12,6 +12,24 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.3.1: the published package pointed its Documentation and
+  Homepage at a private repository (trace-spec#138).** The `[project.urls]` fix
+  landed on `main` after `v0.3.0` was tagged and without a version bump, so PyPI
+  has been serving the old metadata ever since. Anyone installing `trace-verify`
+  and following its Documentation link to the anchor format got a 404, which is
+  the normative rule the package implements.
+
+  The version bump is the fix. Nothing in the URLs needed changing; they were
+  already correct in the tree.
+
+- **`docs/anchor-format.md` is now a pointer rather than a second copy.** The
+  normative document is `trace-spec/spec/registry-anchor-v1.md`, which is public
+  and already the more complete of the two, carrying the canonicalization warning
+  in §0, the `transparency` claim relationship in §6, reference implementations in
+  §7 and conformance in §8. Two copies of a normative canonicalization rule, one
+  of them unreachable by the readers who need it, is how implementations end up
+  disagreeing about which serialization a layer uses.
+
 - **Licensing split: Apache-2.0 for code, CC BY 4.0 for registry data, schemas and
   docs.** The repository declared CC BY 4.0 in full, including the Python under
   `src/`, `tools/` and `aggregator/`. Creative Commons recommends against CC
