@@ -23,6 +23,7 @@ from pathlib import Path
 _PRODUCER_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._+\-]*$"
 )
+_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def is_valid_producer_id(producer_id: object) -> bool:
@@ -98,17 +99,17 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
     if not isinstance(sig_b64, str) or not sig_b64:
         raise ValueError("claim has no 'signature' field")
 
-    try:
-        sig = base64.urlsafe_b64decode(sig_b64 + "==")
-    except Exception as exc:
-        raise ValueError(f"cannot decode signature: {exc}")
+    sig = _decode_base64url(sig_b64, "signature", 64)
+
+    if public_key_jwk.get("kty") != "OKP" or public_key_jwk.get("crv") != "Ed25519":
+        raise ValueError("public_key_jwk must be an OKP/Ed25519 key")
 
     x_b64 = public_key_jwk.get("x")
     if not isinstance(x_b64, str) or not x_b64:
         raise ValueError("public_key_jwk has no 'x' coordinate")
 
     try:
-        pub_bytes = base64.urlsafe_b64decode(x_b64 + "==")
+        pub_bytes = _decode_base64url(x_b64, "public key x", 32)
         pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
     except Exception as exc:
         raise ValueError(f"cannot load public key: {exc}")
@@ -118,6 +119,21 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
         return True
     except InvalidSignature:
         return False
+
+
+def _decode_base64url(value: str, field: str, expected_length: int) -> bytes:
+    if not _BASE64URL_RE.fullmatch(value) or "=" in value:
+        raise ValueError(f"{field} is not unpadded base64url")
+    padding = "=" * (-len(value) % 4)
+    try:
+        decoded = base64.b64decode(value + padding, altchars=b"-_", validate=True)
+    except Exception as exc:
+        raise ValueError(f"cannot decode {field}: {exc}") from exc
+    if len(decoded) != expected_length:
+        raise ValueError(
+            f"{field} must decode to {expected_length} bytes, got {len(decoded)}"
+        )
+    return decoded
 
 
 def load_producer_key(producer_id: str, producers_dir: Path) -> dict | None:
@@ -161,6 +177,14 @@ def verify_claim_against_registry(
     key_entry = load_producer_key(producer_id, producers_dir)
     if key_entry is None:
         return False, f"no registered key for producer {producer_id!r}"
+
+    if key_entry.get("producer_id") != producer_id:
+        return False, f"key file producer_id does not match {producer_id!r}"
+    if key_entry.get("key_type") != "Ed25519":
+        return False, f"key file for {producer_id!r} is not Ed25519"
+    claim_producer = claim.get("producer")
+    if claim_producer is not None and claim_producer != producer_id:
+        return False, "claim producer does not match the selected registry producer"
 
     jwk = key_entry.get("public_key_jwk")
     if not isinstance(jwk, dict):

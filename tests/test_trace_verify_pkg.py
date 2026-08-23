@@ -52,6 +52,18 @@ class TestPackagePublicAPI(unittest.TestCase):
         self.assertIsInstance(__version__, str)
         self.assertRegex(__version__, r"^\d+\.\d+\.\d+")
 
+    def test_runtime_version_matches_package_metadata(self):
+        import re
+
+        match = re.search(
+            r'^version = "([^"]+)"$',
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match)
+        declared = match.group(1)
+        self.assertEqual(__version__, declared)
+
     def test_anchor_format_version(self):
         self.assertEqual(__anchor_format_version__, 1)
         self.assertEqual(ANCHOR_FORMAT_VERSION, 1)
@@ -274,6 +286,28 @@ class TestSignatureDefault(unittest.TestCase):
                 ])
         self.assertEqual(rc, 0)
         self.assertIn("WARNING", err.getvalue())
+
+    def test_claim_and_registry_entry_producers_must_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = {
+                "producer": "claim-producer/1.0.0",
+                "payload": "anchored",
+                "signature": "synthetic",
+            }
+            _, entry, proof = _anchor_one(claim)
+            self.assertNotEqual(claim["producer"], entry["producer"])
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            argv = [
+                "--claim", str(self._write(tmp, "claim.json", claim)),
+                "--proof", str(self._write(tmp, "proof.json", proof)),
+                "--entry", str(ndjson),
+                "--producers-dir", str(tmp / "producers"),
+            ]
+            with self.assertRaises(SystemExit) as ctx:
+                main(argv)
+        self.assertEqual(ctx.exception.code, 1)
 
 
 class TestSSRFGuard(unittest.TestCase):

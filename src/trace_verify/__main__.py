@@ -223,7 +223,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     else:
-        from trace_verify._signature import is_valid_producer_id, load_producer_key, verify_claim_signature
+        from trace_verify._signature import (
+            is_valid_producer_id,
+            verify_claim_against_registry,
+        )
 
         producers_dir = Path(args.producers_dir) if args.producers_dir else Path("producers")
         # Resolve the producer identity: prefer the claim's own 'producer'
@@ -244,31 +247,30 @@ def main(argv: list[str] | None = None) -> int:
         if not is_valid_producer_id(producer_id):
             _die(f"invalid producer id {producer_id!r}", code=1)
 
-        key_entry = load_producer_key(producer_id, producers_dir)
-        if key_entry is None:
-            # Fail closed: no registered key means we cannot establish that the
-            # named producer actually signed this claim.
+        claim_producer = claim.get("producer")
+        entry_producer = entry.get("producer")
+        if claim_producer and entry_producer and claim_producer != entry_producer:
             _die(
-                f"no key file found for producer {producer_id!r} in {producers_dir}; "
-                "cannot verify signature (register the producer, or pass "
-                "--no-verify-signature to skip at your own risk)",
+                "claim producer does not match the producer named by the registry entry",
                 code=1,
             )
 
-        jwk = key_entry.get("public_key_jwk")
-        if not isinstance(jwk, dict):
-            _die(f"key file for {producer_id!r} has no public_key_jwk", code=1)
-
-        try:
-            sig_result = verify_claim_signature(claim, jwk)
-        except (ImportError, ValueError) as exc:
-            if args.as_json:
-                print(json.dumps({"verified": False, "signature_valid": False, "error": str(exc)}))
-            else:
-                print(f"error: {exc}", file=sys.stderr)
-            return 1
-
+        sig_result, reason = verify_claim_against_registry(
+            claim, producer_id, producers_dir
+        )
         if not sig_result:
+            if args.as_json:
+                print(
+                    json.dumps(
+                        {
+                            "verified": False,
+                            "signature_valid": False,
+                            "error": reason,
+                        }
+                    )
+                )
+            else:
+                _die(reason, code=1)
             ok = False
 
     _output(ok, entry, sig_result, args.as_json)
