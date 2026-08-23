@@ -12,6 +12,22 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.3.2 binds all three producer identities before reporting
+  verified.** The signed claim producer, anchored registry-entry producer, and
+  selected producer-key record must agree. Key records must also declare
+  Ed25519 and carry an OKP/Ed25519 JWK; signature and key encodings are strict,
+  unpadded base64url of the required lengths. This closes a consumer-boundary
+  gap where inclusion and a valid signature could be reported together even
+  though the registry entry named a different producer.
+
+- RFC 8785 is now a base dependency because signature verification is the CLI's
+  safe default. A plain `pip install trace-verify` no longer installs a command
+  that necessarily fails until the historical `[signature]` extra is added.
+  The extra remains as an empty compatibility alias.
+
+- The runtime `trace_verify.__version__` now matches the distribution version;
+  it had remained at `0.1.0` while package releases advanced.
+
 - **`trace-verify` 0.3.1: the published package pointed its Documentation and
   Homepage at a private repository (trace-spec#138).** The `[project.urls]` fix
   landed on `main` after `v0.3.0` was tagged and without a version bump, so PyPI

@@ -117,6 +117,25 @@ class TestVerifyClaimSignature(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_claim_signature(self.claim, bad_jwk)
 
+    def test_rejects_wrong_jwk_type_or_curve(self):
+        from trace_verify._signature import verify_claim_signature
+
+        for bad_jwk in (
+            {**self.jwk, "kty": "EC"},
+            {**self.jwk, "crv": "X25519"},
+        ):
+            with self.subTest(jwk=bad_jwk):
+                with self.assertRaisesRegex(ValueError, "OKP/Ed25519"):
+                    verify_claim_signature(self.claim, bad_jwk)
+
+    def test_rejects_noncanonical_or_wrong_length_base64url(self):
+        from trace_verify._signature import verify_claim_signature
+
+        for signature in (self.claim["signature"] + "=", "AA", "!!!!"):
+            with self.subTest(signature=signature):
+                with self.assertRaises(ValueError):
+                    verify_claim_signature({**self.claim, "signature": signature}, self.jwk)
+
     def test_signature_field_excluded_from_signed_body(self):
         """signature field must not participate in the signed message."""
         from trace_verify._signature import verify_claim_signature
@@ -198,6 +217,27 @@ class TestLoadProducerKey(unittest.TestCase):
         from trace_verify._signature import is_valid_producer_id
         self.assertTrue(is_valid_producer_id("cmcp-gateway/0.1.0"))
         self.assertTrue(is_valid_producer_id("acme.thing_2/10.20.30-rc1"))
+
+    def test_registry_verification_rejects_mismatched_key_identity(self):
+        from trace_verify._signature import verify_claim_against_registry
+
+        priv, jwk = _make_keypair()
+        claim = _sign_claim(priv, MINIMAL_CLAIM)
+        entry = {
+            "producer_id": "different-producer/1.0.0",
+            "key_type": "Ed25519",
+            "public_key_jwk": jwk,
+            "active_since": "2026-06-22T00:00:00Z",
+            "contact": "test@example.com",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = Path(tmpdir) / "test-producer-1.0.0.json"
+            key_file.write_text(json.dumps(entry), encoding="utf-8")
+            ok, reason = verify_claim_against_registry(
+                claim, "test-producer/1.0.0", Path(tmpdir)
+            )
+        self.assertFalse(ok)
+        self.assertIn("producer_id", reason)
 
 
 if __name__ == "__main__":
