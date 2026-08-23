@@ -10,6 +10,10 @@ repository as an append-only record. Git's commit history is the
 tamper-evidence layer: any rewrite of a published entry diverges the commit
 hashes that auditors and mirrors have already observed.
 
+Project support is recognized in [SPONSORS.md](SPONSORS.md). Sponsorship is
+separate from producer registration, registry governance, verification
+semantics, and mirror operation.
+
 ## Current Registry State
 
 The registry currently contains **one** entry (`registry/2026/06/12.ndjson`). It is
