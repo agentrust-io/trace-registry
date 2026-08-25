@@ -34,6 +34,12 @@ def _write_claim(dir_: Path, filename: str, claim: dict) -> Path:
     return p
 
 
+def _record(path: Path, claim: dict) -> tuple[Path, dict, bytes]:
+    """Build a (path, claim, raw_bytes) record like scan_staging() returns,
+    for tests that construct records directly rather than via scan_staging."""
+    return (path, claim, json.dumps(claim).encode("utf-8"))
+
+
 def _make_staging(tmp: Path) -> tuple[Path, Path, Path]:
     incoming = tmp / "staging" / "incoming"
     processed = tmp / "staging" / "processed"
@@ -79,9 +85,9 @@ class TestScanStaging(unittest.TestCase):
 class TestGroupByProducer(unittest.TestCase):
     def test_groups_correctly(self):
         records = [
-            (Path("a.json"), _claim(producer="p1/1.0.0")),
-            (Path("b.json"), _claim(producer="p2/1.0.0")),
-            (Path("c.json"), _claim(producer="p1/1.0.0", tag="b")),
+            _record(Path("a.json"), _claim(producer="p1/1.0.0")),
+            _record(Path("b.json"), _claim(producer="p2/1.0.0")),
+            _record(Path("c.json"), _claim(producer="p1/1.0.0", tag="b")),
         ]
         groups = batch_anchor.group_by_producer(records, 0)
         self.assertEqual(sorted(groups.keys()), ["p1/1.0.0", "p2/1.0.0"])
@@ -89,13 +95,13 @@ class TestGroupByProducer(unittest.TestCase):
         self.assertEqual(len(groups["p2/1.0.0"]), 1)
 
     def test_unknown_producer_grouped(self):
-        records = [(Path("x.json"), {"fmt": 1})]  # no producer field
+        records = [_record(Path("x.json"), {"fmt": 1})]  # no producer field
         groups = batch_anchor.group_by_producer(records, 0)
         self.assertIn("__unknown__", groups)
 
     def test_max_batch_truncates(self):
         records = [
-            (Path(f"{i}.json"), _claim(tag=str(i))) for i in range(5)
+            _record(Path(f"{i}.json"), _claim(tag=str(i))) for i in range(5)
         ]
         groups = batch_anchor.group_by_producer(records, 3)
         self.assertEqual(len(groups["cmcp-gateway/0.1.0"]), 3)
@@ -157,13 +163,13 @@ class TestIsAlreadyAnchored(unittest.TestCase):
 
 
 class TestAnchorGroup(unittest.TestCase):
-    def _run(self, dry_run=False):
+    def _run(self, dry_run=False, canonicalization_id=batch_anchor.DEFAULT_CANONICALIZATION):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             registry_dir = tmp / "registry"
             proofs_dir = tmp / "proofs"
             claims = [_claim(), _claim(tag="b")]
-            records = [(Path(f"c{i}.json") , c) for i, c in enumerate(claims)]
+            records = [_record(Path(f"c{i}.json"), c) for i, c in enumerate(claims)]
             b_id = batch_anchor.batch_id_for(claims)
             result = batch_anchor.anchor_group(
                 "cmcp-gateway/0.1.0",
@@ -173,6 +179,7 @@ class TestAnchorGroup(unittest.TestCase):
                 registry_dir,
                 proofs_dir,
                 dry_run=dry_run,
+                canonicalization_id=canonicalization_id,
             )
             if not dry_run:
                 ndjson = registry_dir / "2026" / "06" / "22.ndjson"
@@ -180,6 +187,7 @@ class TestAnchorGroup(unittest.TestCase):
                 entry = json.loads(ndjson.read_text())
                 self.assertEqual(entry["batch_id"], b_id)
                 self.assertEqual(entry["leaf_count"], 2)
+                self.assertEqual(entry["canonicalization_id"], canonicalization_id)
 
                 proof_dir = proofs_dir / "2026" / "06" / "22" / b_id
                 self.assertTrue(proof_dir.exists())
@@ -196,6 +204,10 @@ class TestAnchorGroup(unittest.TestCase):
         self.assertEqual(result["status"], "anchored")
         self.assertEqual(result["leaf_count"], 2)
 
+    def test_real_run_declares_as_transmitted_when_asked(self):
+        result = self._run(dry_run=False, canonicalization_id="as-transmitted")
+        self.assertEqual(result["status"], "anchored")
+
 
 class TestMoveToProcessed(unittest.TestCase):
     def test_moves_files(self):
@@ -206,7 +218,7 @@ class TestMoveToProcessed(unittest.TestCase):
             processed = tmp / "processed"
             processed.mkdir()
             p = _write_claim(incoming, "c.json", _claim())
-            records = [(p, _claim())]
+            records = [_record(p, _claim())]
             batch_anchor.move_to_processed(records, "batch001", processed, dry_run=False)
             self.assertFalse(p.exists())
             self.assertTrue((processed / "batch001" / "c.json").exists())
@@ -217,7 +229,7 @@ class TestMoveToProcessed(unittest.TestCase):
             incoming = tmp / "incoming"
             incoming.mkdir()
             p = _write_claim(incoming, "c.json", _claim())
-            records = [(p, _claim())]
+            records = [_record(p, _claim())]
             batch_anchor.move_to_processed(records, "batch001", tmp / "processed", dry_run=True)
             self.assertTrue(p.exists())
 
@@ -297,6 +309,31 @@ class TestMainCLI(unittest.TestCase):
         report = json.loads(out)
         self.assertTrue(report["dry_run"])
         self.assertEqual(report["batches"][0]["status"], "dry_run")
+
+    def test_canonicalization_flag_declared_on_entry(self):
+        with tempfile.TemporaryDirectory() as d:
+            staging, incoming, _ = _make_staging(Path(d))
+            _write_claim(incoming, "c1.json", _claim())
+            registry_dir = Path(d) / "registry"
+            rc, out = self._run_main(
+                staging, registry_dir, Path(d) / "proofs",
+                ["--json", "--canonicalization", "as-transmitted"],
+            )
+            self.assertEqual(rc, 0)
+            ndjson = registry_dir / "2026" / "06" / "22.ndjson"
+            entry = json.loads(ndjson.read_text().splitlines()[0])
+        self.assertEqual(entry["canonicalization_id"], "as-transmitted")
+
+    def test_default_canonicalization_declared_as_sorted_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            staging, incoming, _ = _make_staging(Path(d))
+            _write_claim(incoming, "c1.json", _claim())
+            registry_dir = Path(d) / "registry"
+            rc, _ = self._run_main(staging, registry_dir, Path(d) / "proofs")
+            self.assertEqual(rc, 0)
+            ndjson = registry_dir / "2026" / "06" / "22.ndjson"
+            entry = json.loads(ndjson.read_text().splitlines()[0])
+        self.assertEqual(entry["canonicalization_id"], "sorted-key")
 
     def test_multiple_producers_separate_batches(self):
         with tempfile.TemporaryDirectory() as d:

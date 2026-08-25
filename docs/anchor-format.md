@@ -29,3 +29,23 @@ are integers, which is most records, which is exactly what makes the mistake
 survivable in testing and fatal in production. Do not reuse the signing
 canonicalizer at the leaf, or the leaf canonicalizer at the signature. See §0 of
 the linked document for the three ways they diverge.
+
+## Anchor-leaf construction is a declared, registered choice
+
+Registry entries carry a `canonicalization_id` field naming the anchor-leaf
+construction used to build that entry's leaves (`schema/registry-entry.schema.json`).
+Two constructions are registered, both first-class and permanently valid --
+neither is a fallback or compatibility path for the other:
+
+| `canonicalization_id` | Construction | Status |
+|---|---|---|
+| `sorted-key` | Sorted-key ASCII JSON (registry-anchor-v1 §1) | Default |
+| `as-transmitted` | The exact signed bytes, no re-serialization | Offered on technical merit; not the default |
+
+An entry with no `canonicalization_id` field predates this field and was built
+under `sorted-key` -- the only construction that existed at the time.
+`tools/anchor.py`, `tools/batch_anchor.py`, and `tools/verify_inclusion.py`
+all select the construction by this declared token rather than assuming one,
+so a mismatched-layer request (naming a signing-layer algorithm such as `jcs`
+where an anchor-leaf construction is expected) fails loudly with a named
+error instead of a silent non-verify.

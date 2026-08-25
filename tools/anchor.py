@@ -14,7 +14,7 @@ library only.
 Usage:
     python tools/anchor.py CLAIM.json [CLAIM2.json ...] \
         --producer cmcp-gateway/0.1.0 [--batch-id ID] [--ts ISO8601Z] \
-        [--proof-dir DIR]
+        [--canonicalization sorted-key|as-transmitted] [--proof-dir DIR]
 
 Append the printed entry to the day file for the (UTC) anchoring date:
     python tools/anchor.py claim.json --producer p >> registry/2026/06/12.ndjson
@@ -32,20 +32,80 @@ from pathlib import Path
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
+# CPB anchor-leaf canonicalization constructions this tool supports, each
+# selectable by a declared `canonicalization_id` (docs/anchor-format.md
+# section 0). Both are first-class and permanently valid -- neither is a
+# compatibility-only fallback for the other.
+CANONICALIZATION_SORTED_KEY = "sorted-key"
+CANONICALIZATION_AS_TRANSMITTED = "as-transmitted"
+ANCHOR_LEAF_CANONICALIZATIONS = frozenset(
+    {CANONICALIZATION_SORTED_KEY, CANONICALIZATION_AS_TRANSMITTED}
+)
+# Unchanged from before this construction was named: sorted-key remains the
+# default when a caller does not declare one.
+DEFAULT_CANONICALIZATION = CANONICALIZATION_SORTED_KEY
 
-def canonical_claim_bytes(claim: dict) -> bytes:
-    """Serialize a claim object to canonical JSON bytes (sorted keys, compact
-    separators, ASCII-only). See docs/anchor-format.md section 1."""
-    if not isinstance(claim, dict):
-        raise ValueError("claim must be a JSON object")
-    return json.dumps(
-        claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
+# Content-digest (signing) layer algorithms -- real CPB constructions, but
+# never valid as an anchor-leaf canonicalization_id. Naming them here lets a
+# mismatched-layer mistake (the #111 trap) fail with a specific diagnosis
+# instead of a bare "unknown" error.
+CONTENT_DIGEST_CANONICALIZATIONS = frozenset({"jcs"})
 
 
-def leaf_hash(claim: dict) -> bytes:
+class UnknownCanonicalizationError(ValueError):
+    """canonicalization_id does not name any registered CPB construction."""
+
+
+class MismatchedCanonicalizationLayerError(ValueError):
+    """canonicalization_id names a real CPB construction, but one that
+    belongs to the content-digest (signing) layer, not the anchor-leaf
+    layer -- the #111 trap this closes by declaration. See
+    docs/anchor-format.md section 0."""
+
+
+def canonical_claim_bytes(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+) -> bytes:
+    """Return the anchor-leaf preimage bytes for *claim* under *canonicalization_id*.
+
+    Both registered anchor-leaf constructions are first-class and permanent
+    (docs/anchor-format.md section 0):
+
+    - ``sorted-key`` (the default, unchanged): sort-keys ASCII JSON
+      re-serialization of the complete signed claim.
+    - ``as-transmitted``: the exact bytes as received, no re-serialization --
+      offered as an option on technical merit (there is nothing to
+      re-canonicalize at the anchor, so nothing to get wrong), never forced.
+    """
+    if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
+        raise MismatchedCanonicalizationLayerError(
+            f"canonicalization_id {canonicalization_id!r} is a content-digest "
+            "(signing) layer algorithm, not a registered anchor-leaf "
+            f"construction. The anchor leaf accepts: "
+            f"{sorted(ANCHOR_LEAF_CANONICALIZATIONS)}. See "
+            "docs/anchor-format.md section 0."
+        )
+    if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        return raw_bytes
+    if canonicalization_id == CANONICALIZATION_SORTED_KEY:
+        if not isinstance(claim, dict):
+            raise ValueError("claim must be a JSON object")
+        return json.dumps(
+            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+    raise UnknownCanonicalizationError(
+        f"unknown canonicalization_id {canonicalization_id!r}; registered "
+        f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
+    )
+
+
+def leaf_hash(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+) -> bytes:
     """SHA-256(0x00 || canonical_claim_bytes), the RFC 6962 leaf hash."""
-    return hashlib.sha256(LEAF_PREFIX + canonical_claim_bytes(claim)).digest()
+    return hashlib.sha256(
+        LEAF_PREFIX + canonical_claim_bytes(raw_bytes, claim, canonicalization_id)
+    ).digest()
 
 
 def _node_hash(left: bytes, right: bytes) -> bytes:
@@ -88,26 +148,39 @@ def build_tree(leaves: list[bytes]) -> tuple[bytes, list[list[str]]]:
     return level[0], paths
 
 
-def make_entry(root: bytes, leaf_count: int, producer: str, batch_id: str, ts: str) -> dict:
-    """Assemble a registry entry object (docs/anchor-format.md section 4)."""
+def make_entry(
+    root: bytes,
+    leaf_count: int,
+    producer: str,
+    batch_id: str,
+    ts: str,
+    canonicalization_id: str = DEFAULT_CANONICALIZATION,
+) -> dict:
+    """Assemble a registry entry object (docs/anchor-format.md section 4).
+
+    ``canonicalization_id`` is always emitted, even for the default
+    construction -- the fix this PR makes is that the construction is
+    declared on every new entry, not assumed from context.
+    """
     return {
         "ts": ts,
         "merkle_root": "sha256:" + root.hex(),
         "leaf_count": leaf_count,
         "producer": producer,
         "batch_id": batch_id,
+        "canonicalization_id": canonicalization_id,
     }
 
 
-def _load_claim(path: Path) -> dict:
+def _load_claim(path: Path) -> tuple[dict, bytes]:
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            claim = json.load(fh)
+        raw = path.read_bytes()
+        claim = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"error: cannot read claim {path}: {exc}")
     if not isinstance(claim, dict):
         raise SystemExit(f"error: claim {path} is not a JSON object")
-    return claim
+    return claim, raw
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,19 +195,28 @@ def main(argv: list[str] | None = None) -> int:
                         help="producer-scoped batch id (default: first 12 hex chars of the root)")
     parser.add_argument("--ts", default=None,
                         help="anchoring timestamp, ISO-8601 UTC with Z suffix (default: now)")
+    parser.add_argument("--canonicalization", default=DEFAULT_CANONICALIZATION,
+                        choices=sorted(ANCHOR_LEAF_CANONICALIZATIONS),
+                        help="CPB anchor-leaf construction (default: "
+                             f"{DEFAULT_CANONICALIZATION}; both are permanent, "
+                             "first-class options -- see docs/anchor-format.md "
+                             "section 0)")
     parser.add_argument("--proof-dir", default=".", metavar="DIR",
                         help="directory for <claim-stem>.proof.json files (default: cwd)")
     args = parser.parse_args(argv)
 
     claim_paths = [Path(p) for p in args.claims]
-    leaves = [leaf_hash(_load_claim(p)) for p in claim_paths]
+    loaded = [_load_claim(p) for p in claim_paths]
+    leaves = [
+        leaf_hash(raw, claim, args.canonicalization) for claim, raw in loaded
+    ]
     root, paths = build_tree(leaves)
 
     ts = args.ts or datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     batch_id = args.batch_id or root.hex()[:12]
-    entry = make_entry(root, len(leaves), args.producer, batch_id, ts)
+    entry = make_entry(root, len(leaves), args.producer, batch_id, ts, args.canonicalization)
 
     proof_dir = Path(args.proof_dir)
     proof_dir.mkdir(parents=True, exist_ok=True)

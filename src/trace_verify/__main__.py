@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 from trace_verify import __version__
-from trace_verify._verify import decode_hash, verify_inclusion
+from trace_verify._verify import VINTAGE_CANONICALIZATION, decode_hash, verify_inclusion
 
 # SSRF guard: only fetch registry entries over https from known registry hosts.
 # This blocks file://, http://, and internal/metadata targets such as
@@ -110,13 +110,17 @@ def _die(msg: str, code: int = 2) -> None:
     sys.exit(code)
 
 
-def _output(ok: bool, entry: dict, sig_result: bool | None, as_json: bool) -> None:
+def _output(
+    ok: bool, entry: dict, sig_result: bool | None, as_json: bool,
+    canonicalization_id: str,
+) -> None:
     if as_json:
         result: dict = {
             "verified": ok,
             "batch_id": entry.get("batch_id"),
             "merkle_root": entry.get("merkle_root"),
             "ts": entry.get("ts"),
+            "canonicalization_id": canonicalization_id,
         }
         if sig_result is not None:
             result["signature_valid"] = sig_result
@@ -129,7 +133,8 @@ def _output(ok: bool, entry: dict, sig_result: bool | None, as_json: bool) -> No
             sig_note = ", signature INVALID"
         print(
             f"OK: claim is included in batch {entry.get('batch_id')!r} "
-            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}){sig_note}"
+            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}, "
+            f"canonicalization_id {canonicalization_id!r}){sig_note}"
         )
     else:
         print(
@@ -182,13 +187,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    claim = _load_json_file(Path(args.claim))
+    claim_path = Path(args.claim)
+    try:
+        claim_raw = claim_path.read_bytes()
+        claim = json.loads(claim_raw)
+    except OSError as exc:
+        _die(f"cannot read {claim_path}: {exc}")
+    except json.JSONDecodeError as exc:
+        _die(f"invalid JSON in {claim_path}: {exc}")
     proof = _load_json_file(Path(args.proof))
 
     entry_source = args.entry_url if args.entry_url else args.entry
     entry = _load_entry(entry_source, args.batch_id)
 
     sig_result: bool | None = None
+    canonicalization_id = entry.get("canonicalization_id", VINTAGE_CANONICALIZATION)
 
     try:
         if not isinstance(claim, dict):
@@ -201,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
         audit_path = [decode_hash(h) for h in raw_path]
         merkle_root = decode_hash(entry.get("merkle_root"))
         ok = verify_inclusion(
+            claim_raw,
             claim,
+            canonicalization_id,
             proof.get("leaf_index"),
             audit_path,
             entry.get("leaf_count"),
@@ -209,9 +224,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ValueError as exc:
         if args.as_json:
-            print(json.dumps({"verified": False, "error": str(exc)}))
+            print(json.dumps({"verified": False, "error": f"{type(exc).__name__}: {exc}"}))
         else:
-            print(f"FAIL: {exc}", file=sys.stderr)
+            print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
     if args.no_verify_signature:
@@ -273,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
                 _die(reason, code=1)
             ok = False
 
-    _output(ok, entry, sig_result, args.as_json)
+    _output(ok, entry, sig_result, args.as_json, canonicalization_id)
     return 0 if ok else 1
 
 

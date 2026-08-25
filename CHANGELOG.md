@@ -12,6 +12,29 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.4.0: the anchor-leaf construction is now a declared,
+  registered `canonicalization_id` (docs/anchor-format.md section 0), not an
+  assumed fact of the format.** Two CPB anchor-leaf constructions are
+  first-class and permanently valid -- neither deprecates the other:
+  `sorted-key` (unchanged default) and `as-transmitted` (offered on
+  technical merit: no re-serialization of an already-signed object).
+  `tools/anchor.py`, `tools/batch_anchor.py`, `trace_verify._verify` and
+  `tools/verify_inclusion.py` all gained a `canonicalization_id` parameter
+  and now emit it on every new registry entry. Entries anchored before this
+  field existed carry none; the vintage rule infers `sorted-key` for those
+  (the only construction that existed at the time), never `as-transmitted`.
+  A `canonicalization_id` naming a real but wrong-layer CPB construction
+  (e.g. `jcs`, the signing-layer algorithm) now fails loudly with
+  `MismatchedCanonicalizationLayerError` instead of a silent non-verify --
+  the #111 trap this closes by declaration rather than by forcing a choice.
+  **Breaking for direct callers of `canonical_claim_bytes()` /
+  `leaf_hash()` / `verify_inclusion()`**: all three now take the claim's raw
+  bytes and a `canonicalization_id` in addition to the parsed claim.
+  `schema/registry-entry.schema.json` gained an optional `canonicalization_id`
+  enum field. `CONTRIBUTING.md` step 4 also corrected: it demonstrated
+  signing with sorted-key JSON, which has not matched `_signature.py`'s
+  RFC 8785 (JCS) requirement since 0.3.0.
+
 - **`trace-verify` 0.3.2 binds all three producer identities before reporting
   verified.** The signed claim producer, anchored registry-entry producer, and
   selected producer-key record must agree. Key records must also declare

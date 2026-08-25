@@ -16,6 +16,13 @@ Usage:
 --entry may be a single-entry JSON file or a registry day file (.ndjson); when
 the file has more than one line, --batch-id selects the entry.
 
+The registry entry's `canonicalization_id` field (docs/anchor-format.md
+section 0) selects which anchor-leaf construction to recompute the claim's
+leaf hash under. Entries anchored before this field existed carry none; the
+vintage rule (VINTAGE_CANONICALIZATION below) infers `sorted-key` for those,
+since that was the only construction that existed at the time -- it does not
+infer `as-transmitted`, which is never assumed.
+
 Exit status: 0 if the claim is proven included, 1 otherwise.
 """
 
@@ -32,15 +39,61 @@ LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
+# CPB anchor-leaf canonicalization constructions this tool supports, each
+# selectable by the registry entry's declared `canonicalization_id`. Both are
+# first-class and permanently valid -- neither is a compatibility-only
+# fallback for the other. Duplicated from anchor.py deliberately (module
+# docstring above): this verifier must be auditable in isolation.
+CANONICALIZATION_SORTED_KEY = "sorted-key"
+CANONICALIZATION_AS_TRANSMITTED = "as-transmitted"
+ANCHOR_LEAF_CANONICALIZATIONS = frozenset(
+    {CANONICALIZATION_SORTED_KEY, CANONICALIZATION_AS_TRANSMITTED}
+)
+# Content-digest (signing) layer algorithms -- real CPB constructions, but
+# never valid as an anchor-leaf canonicalization_id.
+CONTENT_DIGEST_CANONICALIZATIONS = frozenset({"jcs"})
+# Vintage rule: entries anchored before canonicalization_id existed carry no
+# such field. They were all built under sorted-key -- absence infers that
+# token, never as-transmitted. See docs/anchor-format.md section 0.
+VINTAGE_CANONICALIZATION = CANONICALIZATION_SORTED_KEY
 
-def canonical_claim_bytes(claim: dict) -> bytes:
-    """Canonical JSON bytes of the complete signed claim object
-    (docs/anchor-format.md section 1)."""
-    if not isinstance(claim, dict):
-        raise ValueError("claim must be a JSON object")
-    return json.dumps(
-        claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
+
+class UnknownCanonicalizationError(ValueError):
+    """canonicalization_id does not name any registered CPB construction."""
+
+
+class MismatchedCanonicalizationLayerError(ValueError):
+    """canonicalization_id names a real CPB construction, but one that
+    belongs to the content-digest (signing) layer, not the anchor-leaf
+    layer -- the #111 trap this closes by declaration. See
+    docs/anchor-format.md section 0."""
+
+
+def canonical_claim_bytes(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = VINTAGE_CANONICALIZATION
+) -> bytes:
+    """Anchor-leaf preimage bytes for *claim* under *canonicalization_id*
+    (docs/anchor-format.md section 0)."""
+    if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
+        raise MismatchedCanonicalizationLayerError(
+            f"canonicalization_id {canonicalization_id!r} is a content-digest "
+            "(signing) layer algorithm, not a registered anchor-leaf "
+            f"construction. The anchor leaf accepts: "
+            f"{sorted(ANCHOR_LEAF_CANONICALIZATIONS)}. See "
+            "docs/anchor-format.md section 0."
+        )
+    if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        return raw_bytes
+    if canonicalization_id == CANONICALIZATION_SORTED_KEY:
+        if not isinstance(claim, dict):
+            raise ValueError("claim must be a JSON object")
+        return json.dumps(
+            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+    raise UnknownCanonicalizationError(
+        f"unknown canonicalization_id {canonicalization_id!r}; registered "
+        f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
+    )
 
 
 def _decode_hash(value: object) -> bytes:
@@ -51,13 +104,18 @@ def _decode_hash(value: object) -> bytes:
 
 
 def verify_inclusion(
-    claim: dict, leaf_index: int, audit_path: list[bytes],
+    raw_bytes: bytes, claim: dict, canonicalization_id: str,
+    leaf_index: int, audit_path: list[bytes],
     leaf_count: int, merkle_root: bytes,
 ) -> bool:
     """Return True iff the claim's leaf is proven included under merkle_root.
 
     Implements the RFC 9162 section 2.1.3.2 inclusion-proof verification over
-    an RFC 6962 tree (docs/anchor-format.md section 5).
+    an RFC 6962 tree (docs/anchor-format.md section 5). Raises
+    UnknownCanonicalizationError / MismatchedCanonicalizationLayerError
+    (both ValueError subclasses) instead of returning False when
+    *canonicalization_id* itself is invalid -- a construction mismatch is a
+    distinct, named failure from "the proof does not verify".
     """
     if not isinstance(leaf_index, int) or isinstance(leaf_index, bool):
         return False
@@ -66,7 +124,9 @@ def verify_inclusion(
     if leaf_index < 0 or leaf_count < 1 or leaf_index >= leaf_count:
         return False
 
-    r = hashlib.sha256(LEAF_PREFIX + canonical_claim_bytes(claim)).digest()
+    r = hashlib.sha256(
+        LEAF_PREFIX + canonical_claim_bytes(raw_bytes, claim, canonicalization_id)
+    ).digest()
     fn = leaf_index
     sn = leaf_count - 1
 
@@ -135,7 +195,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="select the entry with this batch_id from a multi-line day file")
     args = parser.parse_args(argv)
 
-    claim = _load_json(Path(args.claim))
+    try:
+        claim_raw = Path(args.claim).read_bytes()
+        claim = json.loads(claim_raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"error: cannot read {args.claim}: {exc}")
     proof = _load_json(Path(args.proof))
     entry = _load_entry(Path(args.entry), args.batch_id)
 
@@ -149,21 +213,25 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("proof.audit_path must be a list")
         audit_path = [_decode_hash(h) for h in raw_path]
         merkle_root = _decode_hash(entry.get("merkle_root"))
+        canonicalization_id = entry.get("canonicalization_id", VINTAGE_CANONICALIZATION)
         ok = verify_inclusion(
+            claim_raw,
             claim,
+            canonicalization_id,
             proof.get("leaf_index"),
             audit_path,
             entry.get("leaf_count"),
             merkle_root,
         )
     except ValueError as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
+        print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
     if ok:
         print(
             f"OK: claim is included in batch {entry.get('batch_id')!r} "
-            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')})"
+            f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}, "
+            f"canonicalization_id {canonicalization_id!r})"
         )
         return 0
     print("FAIL: inclusion proof does not verify against the registry entry",
