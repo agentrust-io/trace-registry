@@ -22,6 +22,9 @@ Options:
     --proofs-dir DIR    Root for proof output (default: proofs/ in repo root)
     --max-batch N       Maximum claims per batch; 0 = unlimited (default: 0)
     --ts ISO8601Z       Override anchoring timestamp (default: now)
+    --canonicalization  Anchor-leaf construction: sorted-key (default) or
+                        as-transmitted -- both first-class, see
+                        docs/anchor-format.md section 0
     --dry-run           Compute and report without writing any files
     --json              Emit machine-readable JSON summary to stdout
 
@@ -49,19 +52,66 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
+# CPB anchor-leaf canonicalization constructions this pipeline supports, each
+# selectable by a declared `canonicalization_id` (docs/anchor-format.md
+# section 0). Both are first-class and permanently valid -- neither is a
+# compatibility-only fallback for the other. Duplicated from anchor.py
+# deliberately, for pipeline self-containment (module docstring above).
+CANONICALIZATION_SORTED_KEY = "sorted-key"
+CANONICALIZATION_AS_TRANSMITTED = "as-transmitted"
+ANCHOR_LEAF_CANONICALIZATIONS = frozenset(
+    {CANONICALIZATION_SORTED_KEY, CANONICALIZATION_AS_TRANSMITTED}
+)
+DEFAULT_CANONICALIZATION = CANONICALIZATION_SORTED_KEY
+# Content-digest (signing) layer algorithms -- real CPB constructions, but
+# never valid as an anchor-leaf canonicalization_id.
+CONTENT_DIGEST_CANONICALIZATIONS = frozenset({"jcs"})
+
+
+class UnknownCanonicalizationError(ValueError):
+    """canonicalization_id does not name any registered CPB construction."""
+
+
+class MismatchedCanonicalizationLayerError(ValueError):
+    """canonicalization_id names a real CPB construction, but one that
+    belongs to the content-digest (signing) layer, not the anchor-leaf
+    layer -- the #111 trap this closes by declaration. See
+    docs/anchor-format.md section 0."""
+
 
 # ---------------------------------------------------------------------------
 # Merkle tree (duplicated from anchor.py for pipeline self-containment)
 # ---------------------------------------------------------------------------
 
-def _canonical_claim_bytes(claim: dict) -> bytes:
-    return json.dumps(
-        claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
+def _canonical_claim_bytes(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+) -> bytes:
+    if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
+        raise MismatchedCanonicalizationLayerError(
+            f"canonicalization_id {canonicalization_id!r} is a content-digest "
+            "(signing) layer algorithm, not a registered anchor-leaf "
+            f"construction. The anchor leaf accepts: "
+            f"{sorted(ANCHOR_LEAF_CANONICALIZATIONS)}. See "
+            "docs/anchor-format.md section 0."
+        )
+    if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        return raw_bytes
+    if canonicalization_id == CANONICALIZATION_SORTED_KEY:
+        return json.dumps(
+            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+    raise UnknownCanonicalizationError(
+        f"unknown canonicalization_id {canonicalization_id!r}; registered "
+        f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
+    )
 
 
-def _leaf_hash(claim: dict) -> bytes:
-    return hashlib.sha256(LEAF_PREFIX + _canonical_claim_bytes(claim)).digest()
+def _leaf_hash(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+) -> bytes:
+    return hashlib.sha256(
+        LEAF_PREFIX + _canonical_claim_bytes(raw_bytes, claim, canonicalization_id)
+    ).digest()
 
 
 def _node_hash(left: bytes, right: bytes) -> bytes:
@@ -93,44 +143,58 @@ def _build_tree(leaves: list[bytes]) -> tuple[bytes, list[list[str]]]:
 # Staging helpers
 # ---------------------------------------------------------------------------
 
-def scan_staging(incoming_dir: Path) -> list[tuple[Path, dict]]:
-    """Return (path, claim) pairs for all valid JSON files in incoming_dir."""
-    records: list[tuple[Path, dict]] = []
+def scan_staging(incoming_dir: Path) -> list[tuple[Path, dict, bytes]]:
+    """Return (path, claim, raw_bytes) triples for all valid JSON files in incoming_dir."""
+    records: list[tuple[Path, dict, bytes]] = []
     for path in sorted(incoming_dir.glob("*.json")):
         try:
-            claim = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_bytes()
+            claim = json.loads(raw)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"warning: skipping {path.name}: {exc}", file=sys.stderr)
             continue
         if not isinstance(claim, dict):
             print(f"warning: skipping {path.name}: not a JSON object", file=sys.stderr)
             continue
-        records.append((path, claim))
+        records.append((path, claim, raw))
     return records
 
 
 def group_by_producer(
-    records: list[tuple[Path, dict]], max_batch: int
-) -> dict[str, list[tuple[Path, dict]]]:
+    records: list[tuple[Path, dict, bytes]], max_batch: int
+) -> dict[str, list[tuple[Path, dict, bytes]]]:
     """Group records by the 'producer' field in each claim.
 
     Claims missing a 'producer' field are grouped under '__unknown__'.
     If max_batch > 0, each group is truncated to at most max_batch items.
     """
-    groups: dict[str, list[tuple[Path, dict]]] = {}
-    for path, claim in records:
+    groups: dict[str, list[tuple[Path, dict, bytes]]] = {}
+    for path, claim, raw in records:
         producer = claim.get("producer", "__unknown__")
-        groups.setdefault(producer, []).append((path, claim))
+        groups.setdefault(producer, []).append((path, claim, raw))
     if max_batch > 0:
         groups = {p: items[:max_batch] for p, items in groups.items()}
     return groups
 
 
+def _identity_bytes(claim: dict) -> bytes:
+    """Sorted-key JSON bytes used ONLY to derive the idempotency batch_id below.
+
+    Deliberately independent of the anchor-leaf `canonicalization_id` choice
+    (`_canonical_claim_bytes`): re-running the same input under a different
+    `--canonicalization` must still resolve to the same batch_id so the
+    idempotency check in `is_already_anchored` keeps working either way.
+    """
+    return json.dumps(
+        claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+
+
 def batch_id_for(claims: list[dict]) -> str:
     """Deterministic batch_id: first 16 hex chars of SHA-256 over sorted canonical bytes."""
     h = hashlib.sha256()
-    for claim in sorted(claims, key=lambda c: _canonical_claim_bytes(c)):
-        h.update(_canonical_claim_bytes(claim))
+    for claim in sorted(claims, key=_identity_bytes):
+        h.update(_identity_bytes(claim))
     return h.hexdigest()[:16]
 
 
@@ -158,14 +222,14 @@ def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def verify_group(
-    producer: str, records: list[tuple[Path, dict]], producers_dir: Path
+    producer: str, records: list[tuple[Path, dict, bytes]], producers_dir: Path
 ) -> str | None:
     """Return None if every claim in the group verifies against the producer's
     registered key, else a string reason. Fail-closed: a missing key or a bad
     signature rejects the whole group so it is never anchored."""
     from trace_verify._signature import verify_claim_against_registry
 
-    for _, claim in records:
+    for _, claim, _ in records:
         ok, reason = verify_claim_against_registry(claim, producer, producers_dir)
         if not ok:
             return reason
@@ -178,16 +242,16 @@ def verify_group(
 
 def anchor_group(
     producer: str,
-    records: list[tuple[Path, dict]],
+    records: list[tuple[Path, dict, bytes]],
     ts: str,
     batch_id: str,
     registry_dir: Path,
     proofs_dir: Path,
     dry_run: bool,
+    canonicalization_id: str = DEFAULT_CANONICALIZATION,
 ) -> dict:
     """Anchor one producer group. Returns a result dict with status and details."""
-    claims = [claim for _, claim in records]
-    leaves = [_leaf_hash(c) for c in claims]
+    leaves = [_leaf_hash(raw, claim, canonicalization_id) for _, claim, raw in records]
     root, paths = _build_tree(leaves)
     root_hex = "sha256:" + root.hex()
 
@@ -197,6 +261,7 @@ def anchor_group(
         "leaf_count": len(leaves),
         "producer": producer,
         "batch_id": batch_id,
+        "canonicalization_id": canonicalization_id,
     }
 
     # Destination paths
@@ -205,7 +270,7 @@ def anchor_group(
     proof_batch_dir = proofs_dir / date_parts[0] / date_parts[1] / date_parts[2] / batch_id
 
     proof_files: list[tuple[Path, str]] = []
-    for i, (claim_path, _) in enumerate(records):
+    for i, (claim_path, _, _raw) in enumerate(records):
         proof = {"leaf_index": i, "audit_path": paths[i]}
         proof_path = proof_batch_dir / (claim_path.stem + ".proof.json")
         proof_files.append((proof_path, json.dumps(proof, indent=2) + "\n"))
@@ -233,7 +298,7 @@ def anchor_group(
 
 
 def move_to_processed(
-    records: list[tuple[Path, dict]],
+    records: list[tuple[Path, dict, bytes]],
     batch_id: str,
     processed_dir: Path,
     dry_run: bool,
@@ -242,7 +307,7 @@ def move_to_processed(
         return
     dest = processed_dir / batch_id
     dest.mkdir(parents=True, exist_ok=True)
-    for path, _ in records:
+    for path, _, _raw in records:
         shutil.move(str(path), str(dest / path.name))
 
 
@@ -268,6 +333,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="max claims per batch, 0=unlimited (default: 0)")
     parser.add_argument("--ts", default=None, metavar="ISO8601Z",
                         help="override anchoring timestamp (default: now)")
+    parser.add_argument("--canonicalization", default=DEFAULT_CANONICALIZATION,
+                        choices=sorted(ANCHOR_LEAF_CANONICALIZATIONS),
+                        help="CPB anchor-leaf construction (default: "
+                             f"{DEFAULT_CANONICALIZATION}; both are permanent, "
+                             "first-class options -- see docs/anchor-format.md "
+                             "section 0)")
     parser.add_argument("--dry-run", action="store_true",
                         help="compute without writing any files")
     parser.add_argument("--json", action="store_true", dest="as_json",
@@ -318,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
 
     for producer, group_records in groups.items():
-        claims = [c for _, c in group_records]
+        claims = [c for _, c, _ in group_records]
         b_id = batch_id_for(claims)
 
         if not args.no_verify_signatures:
@@ -352,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             result = anchor_group(
                 producer, group_records, ts, b_id,
                 registry_dir, proofs_dir, args.dry_run,
+                canonicalization_id=args.canonicalization,
             )
             move_to_processed(group_records, b_id, processed_dir, args.dry_run)
             if not args.as_json:

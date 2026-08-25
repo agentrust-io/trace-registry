@@ -21,6 +21,15 @@ from pathlib import Path
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
+# The aggregator's submit() API takes already-parsed claim dicts, not raw
+# bytes, so it can only build leaves under the sorted-key construction (the
+# as-transmitted option needs the producer's exact transmitted bytes, which
+# this API does not carry -- offering it here is a wider API change, left as
+# a follow-up). It still DECLARES that construction on every entry
+# (docs/anchor-format.md section 0), closing the trap by declaration here
+# too rather than leaving these entries silently assumption-based.
+_CANONICALIZATION_ID = "sorted-key"
+
 
 def _canonical(claim: dict) -> bytes:
     return json.dumps(
@@ -216,6 +225,7 @@ class TRACEAggregator:
                 "leaf_count": len(leaves),
                 "producer": producer,
                 "batch_id": b_id,
+                "canonicalization_id": _CANONICALIZATION_ID,
             }
 
             self._write_registry_entry(entry, ts)

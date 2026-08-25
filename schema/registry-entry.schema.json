@@ -55,6 +55,11 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
       "description": "Checkpoint only: timestamp of the latest batch covered"
+    },
+    "canonicalization_id": {
+      "type": "string",
+      "enum": ["sorted-key", "as-transmitted"],
+      "description": "Batch entries only: the CPB anchor-leaf construction this entry's leaves were built under (docs/anchor-format.md section 0). Both are first-class and permanently valid; neither is a fallback for the other. Omitted on entries anchored before this field existed -- those were all built under sorted-key, the only construction that existed at the time; a verifier MUST infer sorted-key for an absent field, never as-transmitted."
     }
   },
   "if": {

@@ -37,8 +37,15 @@ def _make_claim(i: int = 0) -> dict:
     return {"id": i, "payload": f"claim-{i}", "signature": f"sig-{i}"}
 
 
+def _sorted_key_bytes(claim: dict) -> bytes:
+    return json.dumps(
+        claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+
+
 def _anchor_one(claim: dict) -> tuple[str, dict, dict]:
-    """Return (merkle_root_hex, entry_dict, proof_dict) for a single claim."""
+    """Return (merkle_root_hex, entry_dict, proof_dict) for a single claim,
+    anchored under the default (sorted-key) construction."""
     leaf = anchor.leaf_hash(claim)
     root, paths = anchor.build_tree([leaf])
     entry = anchor.make_entry(root, 1, "test-gateway/0.1.0", "batch-test",
@@ -71,6 +78,21 @@ class TestPackagePublicAPI(unittest.TestCase):
     def test_canonical_claim_bytes_matches_tools(self):
         import verify_inclusion as vi
         claim = _make_claim(42)
+        raw = _sorted_key_bytes(claim)
+        self.assertEqual(
+            canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
+            vi.canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
+        )
+        self.assertEqual(
+            canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
+            vi.canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
+        )
+
+    def test_canonical_claim_bytes_bare_call_matches_tools_unchanged(self):
+        # Additive-not-breaking (Steven, 2026-08-24): the bare call with only
+        # the original positional argument must be unaffected.
+        import verify_inclusion as vi
+        claim = _make_claim(43)
         self.assertEqual(canonical_claim_bytes(claim), vi.canonical_claim_bytes(claim))
 
     def test_verify_inclusion_matches_tools(self):
@@ -236,6 +258,75 @@ class TestCLIWithFiles(unittest.TestCase):
             "--entry", str(registry),
         )
         self.assertEqual(rc, 0)
+
+
+class TestCanonicalizationCLI(unittest.TestCase):
+    """docs/anchor-format.md section 0: both anchor-leaf constructions are
+    first-class, selected by the entry's declared canonicalization_id."""
+
+    def _write(self, tmp: Path, name: str, obj: object) -> Path:
+        p = tmp / name
+        p.write_text(json.dumps(obj), encoding="utf-8")
+        return p
+
+    def test_as_transmitted_entry_round_trips(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = _make_claim(0)
+            raw = _sorted_key_bytes(claim)  # any raw form works for as-transmitted
+            leaf = anchor.leaf_hash(claim, canonicalization_id="as-transmitted", raw_bytes=raw)
+            root, paths = anchor.build_tree([leaf])
+            entry = anchor.make_entry(root, 1, "test-gateway/0.1.0", "batch-test",
+                                       "2026-06-12T18:00:00Z", "as-transmitted")
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            claim_path = tmp / "claim.json"
+            claim_path.write_bytes(raw)
+            proof = {"leaf_index": 0, "audit_path": paths[0]}
+            rc = main([
+                "--claim", str(claim_path),
+                "--proof", str(self._write(tmp, "proof.json", proof)),
+                "--entry", str(ndjson),
+                "--no-verify-signature",
+            ])
+        self.assertEqual(rc, 0)
+
+    def test_vintage_entry_without_canonicalization_id_infers_sorted_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = _make_claim(0)
+            _, entry, proof = _anchor_one(claim)
+            del entry["canonicalization_id"]  # simulate a pre-PR-1 entry
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            rc = main([
+                "--claim", str(self._write(tmp, "claim.json", claim)),
+                "--proof", str(self._write(tmp, "proof.json", proof)),
+                "--entry", str(ndjson),
+                "--no-verify-signature",
+            ])
+        self.assertEqual(rc, 0)
+
+    def test_mismatched_layer_id_fails_loudly_not_silently(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            claim = _make_claim(0)
+            _, entry, proof = _anchor_one(claim)
+            entry["canonicalization_id"] = "jcs"  # signing-layer id, wrong layer
+            ndjson = tmp / "12.ndjson"
+            ndjson.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            import io
+            from contextlib import redirect_stderr
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = main([
+                    "--claim", str(self._write(tmp, "claim.json", claim)),
+                    "--proof", str(self._write(tmp, "proof.json", proof)),
+                    "--entry", str(ndjson),
+                    "--no-verify-signature",
+                ])
+        self.assertEqual(rc, 1)
+        self.assertIn("MismatchedCanonicalizationLayerError", err.getvalue())
 
 
 class TestSignatureDefault(unittest.TestCase):

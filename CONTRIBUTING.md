@@ -42,9 +42,10 @@ A producer is any system that generates signed TRACE Trust Records and anchors t
 
 3. Open a pull request. CI will validate the file against `schema/producer-key.schema.json` and check the filename matches the `producer_id`.
 
-4. Sign your Trust Records over the canonical body bytes -- all fields except `signature` -- serialized as:
+4. Sign your Trust Records over the canonical body bytes -- all fields except `signature` -- serialized as **RFC 8785 (JCS)**, the signing-layer canonicalization (TRACE v0.2 §3.2; not the sorted-key ASCII JSON used for the anchor leaf -- see `docs/anchor-format.md`):
    ```python
-   json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+   import rfc8785
+   rfc8785.dumps(body)
    ```
    Store the raw 64-byte signature as base64url (no padding) in the top-level `signature` field.
 

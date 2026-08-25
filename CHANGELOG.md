@@ -12,6 +12,33 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.3.3 (additive, not breaking): the anchor-leaf
+  construction is now a declared, registered `canonicalization_id`
+  (docs/anchor-format.md section 0), not an assumed fact of the format.**
+  Two CPB anchor-leaf constructions are first-class and permanently valid --
+  neither deprecates the other: `sorted-key` (unchanged default) and
+  `as-transmitted` (offered on technical merit: no re-serialization of an
+  already-signed object). `trace_verify._verify.canonical_claim_bytes()` /
+  `verify_inclusion()` (and their `tools/` mirrors) each gain two new
+  keyword-only parameters, `canonicalization_id` and `raw_bytes`, both
+  optional; every original positional parameter keeps its name, order, and
+  default behavior. **Every existing call site -- `canonical_claim_bytes(claim)`,
+  `verify_inclusion(claim, leaf_index, audit_path, leaf_count, merkle_root)`
+  -- returns byte-for-byte what it always has.** `tools/anchor.py`,
+  `tools/batch_anchor.py`, `aggregator/_core.py`, `trace_verify._verify` and
+  `tools/verify_inclusion.py` all now emit `canonicalization_id` on every new
+  registry entry (a data field, not a call-signature change). Entries
+  anchored before this field existed carry none; the vintage rule infers
+  `sorted-key` for those (the only construction that existed at the time),
+  never `as-transmitted`. A `canonicalization_id` naming a real but
+  wrong-layer CPB construction (e.g. `jcs`, the signing-layer algorithm) now
+  fails loudly with `MismatchedCanonicalizationLayerError` instead of a
+  silent non-verify -- the #111 trap this closes by declaration rather than
+  by forcing a choice. `schema/registry-entry.schema.json` gained an
+  optional `canonicalization_id` enum field. `CONTRIBUTING.md` step 4 also
+  corrected: it demonstrated signing with sorted-key JSON, which has not
+  matched `_signature.py`'s RFC 8785 (JCS) requirement since 0.3.0.
+
 - **`trace-verify` 0.3.2 binds all three producer identities before reporting
   verified.** The signed claim producer, anchored registry-entry producer, and
   selected producer-key record must agree. Key records must also declare
