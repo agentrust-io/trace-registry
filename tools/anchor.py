@@ -64,9 +64,17 @@ class MismatchedCanonicalizationLayerError(ValueError):
 
 
 def canonical_claim_bytes(
-    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+    claim: dict,
+    *,
+    canonicalization_id: str = DEFAULT_CANONICALIZATION,
+    raw_bytes: bytes | None = None,
 ) -> bytes:
     """Return the anchor-leaf preimage bytes for *claim* under *canonicalization_id*.
+
+    Additive, not breaking: ``canonical_claim_bytes(claim)`` -- every
+    existing call site -- returns byte-for-byte what it always has (the
+    ``sorted-key`` construction below). ``canonicalization_id`` and
+    ``raw_bytes`` are new, keyword-only, and opt-in.
 
     Both registered anchor-leaf constructions are first-class and permanent
     (docs/anchor-format.md section 0):
@@ -76,6 +84,8 @@ def canonical_claim_bytes(
     - ``as-transmitted``: the exact bytes as received, no re-serialization --
       offered as an option on technical merit (there is nothing to
       re-canonicalize at the anchor, so nothing to get wrong), never forced.
+      Requires ``raw_bytes``; omitting it is a caller error, not a silent
+      fallback to some other construction.
     """
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
@@ -86,6 +96,12 @@ def canonical_claim_bytes(
             "docs/anchor-format.md section 0."
         )
     if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        if raw_bytes is None:
+            raise ValueError(
+                "canonicalization_id='as-transmitted' requires raw_bytes "
+                "(the producer's exact signed bytes) -- there is nothing to "
+                "re-serialize at this layer, by design"
+            )
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
@@ -100,11 +116,20 @@ def canonical_claim_bytes(
 
 
 def leaf_hash(
-    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+    claim: dict,
+    *,
+    canonicalization_id: str = DEFAULT_CANONICALIZATION,
+    raw_bytes: bytes | None = None,
 ) -> bytes:
-    """SHA-256(0x00 || canonical_claim_bytes), the RFC 6962 leaf hash."""
+    """SHA-256(0x00 || canonical_claim_bytes), the RFC 6962 leaf hash.
+
+    Additive, not breaking: see :func:`canonical_claim_bytes`.
+    """
     return hashlib.sha256(
-        LEAF_PREFIX + canonical_claim_bytes(raw_bytes, claim, canonicalization_id)
+        LEAF_PREFIX
+        + canonical_claim_bytes(
+            claim, canonicalization_id=canonicalization_id, raw_bytes=raw_bytes
+        )
     ).digest()
 
 
@@ -208,7 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     claim_paths = [Path(p) for p in args.claims]
     loaded = [_load_claim(p) for p in claim_paths]
     leaves = [
-        leaf_hash(raw, claim, args.canonicalization) for claim, raw in loaded
+        leaf_hash(claim, canonicalization_id=args.canonicalization, raw_bytes=raw)
+        for claim, raw in loaded
     ]
     root, paths = build_tree(leaves)
 

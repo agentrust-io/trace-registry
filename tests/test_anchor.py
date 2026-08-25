@@ -32,8 +32,11 @@ def _sorted_key_bytes(claim: dict) -> bytes:
 
 def _leaf(claim: dict, canonicalization_id: str = anchor.DEFAULT_CANONICALIZATION,
           raw: bytes | None = None) -> bytes:
-    return anchor.leaf_hash(raw if raw is not None else _sorted_key_bytes(claim),
-                             claim, canonicalization_id)
+    """Exercise the additive default path when raw is omitted -- this is
+    exactly the pre-PR-1 call shape, anchor.leaf_hash(claim)."""
+    if raw is None:
+        return anchor.leaf_hash(claim, canonicalization_id=canonicalization_id)
+    return anchor.leaf_hash(claim, canonicalization_id=canonicalization_id, raw_bytes=raw)
 
 
 def _decode_path(path: list[str]) -> list[bytes]:
@@ -43,34 +46,39 @@ def _decode_path(path: list[str]) -> list[bytes]:
 def _verify(claim: dict, index: int, path: list[str], count: int, root: bytes,
             canonicalization_id: str = anchor.DEFAULT_CANONICALIZATION,
             raw: bytes | None = None) -> bool:
+    kwargs = {"canonicalization_id": canonicalization_id}
+    if raw is not None:
+        kwargs["raw_bytes"] = raw
     return verify_inclusion.verify_inclusion(
-        raw if raw is not None else _sorted_key_bytes(claim), claim,
-        canonicalization_id, index, _decode_path(path), count, root,
+        claim, index, _decode_path(path), count, root, **kwargs
     )
 
 
 class TestCanonicalization(unittest.TestCase):
     """Both anchor-leaf constructions are first-class and permanent
     (docs/anchor-format.md): sorted-key stays the default, as-transmitted is
-    an offered option -- see the "allow BOTH" framing in the PR-1 issue."""
+    an offered option -- see the "allow BOTH" framing in the PR-1 issue.
+    canonicalization_id/raw_bytes are additive: every call using only the
+    original positional argument(s) must return byte-for-byte what it always
+    has -- see TestAdditiveBackCompat below for the dedicated check."""
 
     def test_sorted_key_key_order_does_not_matter(self):
         a = {"b": 1, "a": {"y": 2, "x": 3}}
         b = {"a": {"x": 3, "y": 2}, "b": 1}
         self.assertEqual(
-            anchor.canonical_claim_bytes(b"", a, "sorted-key"),
-            anchor.canonical_claim_bytes(b"", b, "sorted-key"),
+            anchor.canonical_claim_bytes(a, canonicalization_id="sorted-key"),
+            anchor.canonical_claim_bytes(b, canonicalization_id="sorted-key"),
         )
 
     def test_sorted_key_compact_sorted_ascii(self):
         self.assertEqual(
-            anchor.canonical_claim_bytes(b"", {"b": "é", "a": 1}, "sorted-key"),
+            anchor.canonical_claim_bytes({"b": "é", "a": 1}, canonicalization_id="sorted-key"),
             b'{"a":1,"b":"\\u00e9"}',
         )
 
     def test_sorted_key_non_object_claim_rejected(self):
         with self.assertRaises(ValueError):
-            anchor.canonical_claim_bytes(b"", ["not", "an", "object"], "sorted-key")
+            anchor.canonical_claim_bytes(["not", "an", "object"], canonicalization_id="sorted-key")
 
     def test_as_transmitted_returns_raw_bytes_verbatim(self):
         # Deliberately NOT what sort_keys=True would produce (whitespace, key
@@ -78,49 +86,82 @@ class TestCanonicalization(unittest.TestCase):
         # commit to exactly what was received.
         raw = b'{ "b": "\xc3\xa9", "a" : 1 }'
         claim = json.loads(raw)
-        self.assertEqual(anchor.canonical_claim_bytes(raw, claim, "as-transmitted"), raw)
+        self.assertEqual(
+            anchor.canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
+            raw,
+        )
         self.assertNotEqual(raw, _sorted_key_bytes(claim))
 
-    def test_default_is_sorted_key(self):
-        self.assertEqual(anchor.DEFAULT_CANONICALIZATION, "sorted-key")
-        claim = _claims(1)[0]
-        raw = _sorted_key_bytes(claim)
-        self.assertEqual(
-            anchor.canonical_claim_bytes(raw, claim),
-            anchor.canonical_claim_bytes(raw, claim, "sorted-key"),
-        )
+    def test_as_transmitted_without_raw_bytes_is_a_caller_error(self):
+        with self.assertRaises(ValueError):
+            anchor.canonical_claim_bytes({"a": 1}, canonicalization_id="as-transmitted")
 
     def test_unknown_canonicalization_id_raises_named_error(self):
         with self.assertRaises(anchor.UnknownCanonicalizationError):
-            anchor.canonical_claim_bytes(b"{}", {}, "base64url-cbor")
+            anchor.canonical_claim_bytes({}, canonicalization_id="base64url-cbor")
 
     def test_content_digest_id_at_anchor_layer_is_a_named_mismatch(self):
         # "jcs" is a real CPB construction, just not one valid at this layer
         # -- the #111 trap this PR closes by declaration.
         with self.assertRaises(anchor.MismatchedCanonicalizationLayerError):
-            anchor.canonical_claim_bytes(b"{}", {}, "jcs")
+            anchor.canonical_claim_bytes({}, canonicalization_id="jcs")
 
     def test_implementations_agree_sorted_key(self):
         claim = _claims(1)[0]
-        raw = _sorted_key_bytes(claim)
         self.assertEqual(
-            anchor.canonical_claim_bytes(raw, claim, "sorted-key"),
-            verify_inclusion.canonical_claim_bytes(raw, claim, "sorted-key"),
+            anchor.canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
+            verify_inclusion.canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
         )
 
     def test_implementations_agree_as_transmitted(self):
         raw = b'{"weird": true,   "spacing": 1}'
         claim = json.loads(raw)
         self.assertEqual(
-            anchor.canonical_claim_bytes(raw, claim, "as-transmitted"),
-            verify_inclusion.canonical_claim_bytes(raw, claim, "as-transmitted"),
+            anchor.canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
+            verify_inclusion.canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
         )
 
     def test_verifier_also_names_unknown_and_mismatched(self):
         with self.assertRaises(verify_inclusion.UnknownCanonicalizationError):
-            verify_inclusion.canonical_claim_bytes(b"{}", {}, "base64url-cbor")
+            verify_inclusion.canonical_claim_bytes({}, canonicalization_id="base64url-cbor")
         with self.assertRaises(verify_inclusion.MismatchedCanonicalizationLayerError):
-            verify_inclusion.canonical_claim_bytes(b"{}", {}, "jcs")
+            verify_inclusion.canonical_claim_bytes({}, canonicalization_id="jcs")
+
+
+class TestAdditiveBackCompat(unittest.TestCase):
+    """The canonicalization_id/raw_bytes parameters must be additive, not
+    breaking (Steven, 2026-08-24): every pre-existing call shape -- the bare
+    original positional argument(s), nothing else -- must return exactly
+    what it always did. This is the dedicated regression guard for that."""
+
+    def test_canonical_claim_bytes_bare_call_unchanged(self):
+        claim = {"b": "é", "a": 1}
+        self.assertEqual(
+            anchor.canonical_claim_bytes(claim),
+            b'{"a":1,"b":"\\u00e9"}',
+        )
+        self.assertEqual(
+            anchor.canonical_claim_bytes(claim),
+            verify_inclusion.canonical_claim_bytes(claim),
+        )
+
+    def test_leaf_hash_bare_call_unchanged(self):
+        claim = _claims(1)[0]
+        self.assertEqual(
+            anchor.leaf_hash(claim),
+            hashlib.sha256(b"\x00" + _sorted_key_bytes(claim)).digest(),
+        )
+
+    def test_verify_inclusion_bare_call_unchanged(self):
+        claims = _claims(3)
+        root, paths = anchor.build_tree([anchor.leaf_hash(c) for c in claims])
+        for i, claim in enumerate(claims):
+            with self.subTest(i=i):
+                self.assertTrue(
+                    verify_inclusion.verify_inclusion(
+                        claim, i, _decode_path(paths[i]), 3, root
+                    )
+                )
 
 
 class TestTreeConstruction(unittest.TestCase):
@@ -221,12 +262,11 @@ class TestInclusionProofs(unittest.TestCase):
         self.assertFalse(_verify(claim, 0, paths[0], 1, root, "sorted-key"))
 
     def test_mismatched_layer_id_raises_named_error_not_silent_fail(self):
-        raw = _sorted_key_bytes(_claims(1)[0])
-        claim = json.loads(raw)
+        claim = _claims(1)[0]
         leaf = _leaf(claim)
         root, paths = anchor.build_tree([leaf])
         with self.assertRaises(verify_inclusion.MismatchedCanonicalizationLayerError):
-            _verify(claim, 0, paths[0], 1, root, "jcs", raw=raw)
+            _verify(claim, 0, paths[0], 1, root, "jcs")
 
 
 class TestEntryFormat(unittest.TestCase):
@@ -267,17 +307,12 @@ class TestVerifyInclusionCLI(unittest.TestCase):
         claim_path = tmp / "claim.json"
         claim_path.write_text(json.dumps(claim), encoding="utf-8")
 
-        argv = ["--producer", "p/1.0.0", "--proof-dir", str(tmp), str(claim_path)]
-        if canonicalization_id is not None:
-            argv = ["--canonicalization", canonicalization_id] + argv
-        # Capture stdout by redirecting via a pipe-free approach: anchor.main
-        # prints the entry to stdout, so call the pieces directly instead.
         raw = claim_path.read_bytes()
-        leaf = anchor.leaf_hash(raw, claim, canonicalization_id or anchor.DEFAULT_CANONICALIZATION)
+        cid = canonicalization_id or anchor.DEFAULT_CANONICALIZATION
+        leaf = anchor.leaf_hash(claim, canonicalization_id=cid, raw_bytes=raw)
         root, paths = anchor.build_tree([leaf])
         entry = anchor.make_entry(
-            root, 1, "p/1.0.0", "b-1", "2026-06-12T00:00:00Z",
-            canonicalization_id or anchor.DEFAULT_CANONICALIZATION,
+            root, 1, "p/1.0.0", "b-1", "2026-06-12T00:00:00Z", cid,
         )
         if drop_canonicalization_id:
             del entry["canonicalization_id"]

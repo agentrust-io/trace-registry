@@ -5,7 +5,7 @@ Standard library only. Anchor format v1 (docs/anchor-format.md).
 
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.3.3"
 __anchor_format_version__ = 1
 __all__ = [
     "verify_inclusion",

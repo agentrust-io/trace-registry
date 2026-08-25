@@ -46,8 +46,7 @@ def _sorted_key_bytes(claim: dict) -> bytes:
 def _anchor_one(claim: dict) -> tuple[str, dict, dict]:
     """Return (merkle_root_hex, entry_dict, proof_dict) for a single claim,
     anchored under the default (sorted-key) construction."""
-    raw = _sorted_key_bytes(claim)
-    leaf = anchor.leaf_hash(raw, claim)
+    leaf = anchor.leaf_hash(claim)
     root, paths = anchor.build_tree([leaf])
     entry = anchor.make_entry(root, 1, "test-gateway/0.1.0", "batch-test",
                               "2026-06-12T18:00:00Z")
@@ -81,24 +80,30 @@ class TestPackagePublicAPI(unittest.TestCase):
         claim = _make_claim(42)
         raw = _sorted_key_bytes(claim)
         self.assertEqual(
-            canonical_claim_bytes(raw, claim, "sorted-key"),
-            vi.canonical_claim_bytes(raw, claim, "sorted-key"),
+            canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
+            vi.canonical_claim_bytes(claim, canonicalization_id="sorted-key"),
         )
         self.assertEqual(
-            canonical_claim_bytes(raw, claim, "as-transmitted"),
-            vi.canonical_claim_bytes(raw, claim, "as-transmitted"),
+            canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
+            vi.canonical_claim_bytes(claim, canonicalization_id="as-transmitted", raw_bytes=raw),
         )
+
+    def test_canonical_claim_bytes_bare_call_matches_tools_unchanged(self):
+        # Additive-not-breaking (Steven, 2026-08-24): the bare call with only
+        # the original positional argument must be unaffected.
+        import verify_inclusion as vi
+        claim = _make_claim(43)
+        self.assertEqual(canonical_claim_bytes(claim), vi.canonical_claim_bytes(claim))
 
     def test_verify_inclusion_matches_tools(self):
         import verify_inclusion as vi
         claim = _make_claim(5)
-        raw = _sorted_key_bytes(claim)
         root_hex, entry, proof = _anchor_one(claim)
         root_bytes = bytes.fromhex(root_hex)
         path_bytes = [decode_hash(h) for h in proof["audit_path"]]
 
-        pkg_result = verify_inclusion(raw, claim, "sorted-key", 0, path_bytes, 1, root_bytes)
-        tool_result = vi.verify_inclusion(raw, claim, "sorted-key", 0, path_bytes, 1, root_bytes)
+        pkg_result = verify_inclusion(claim, 0, path_bytes, 1, root_bytes)
+        tool_result = vi.verify_inclusion(claim, 0, path_bytes, 1, root_bytes)
         self.assertTrue(pkg_result)
         self.assertEqual(pkg_result, tool_result)
 
@@ -269,7 +274,7 @@ class TestCanonicalizationCLI(unittest.TestCase):
             tmp = Path(d)
             claim = _make_claim(0)
             raw = _sorted_key_bytes(claim)  # any raw form works for as-transmitted
-            leaf = anchor.leaf_hash(raw, claim, "as-transmitted")
+            leaf = anchor.leaf_hash(claim, canonicalization_id="as-transmitted", raw_bytes=raw)
             root, paths = anchor.build_tree([leaf])
             entry = anchor.make_entry(root, 1, "test-gateway/0.1.0", "batch-test",
                                        "2026-06-12T18:00:00Z", "as-transmitted")

@@ -214,13 +214,13 @@ def main(argv: list[str] | None = None) -> int:
         audit_path = [decode_hash(h) for h in raw_path]
         merkle_root = decode_hash(entry.get("merkle_root"))
         ok = verify_inclusion(
-            claim_raw,
             claim,
-            canonicalization_id,
             proof.get("leaf_index"),
             audit_path,
             entry.get("leaf_count"),
             merkle_root,
+            canonicalization_id=canonicalization_id,
+            raw_bytes=claim_raw,
         )
     except ValueError as exc:
         if args.as_json:

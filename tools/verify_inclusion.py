@@ -70,10 +70,19 @@ class MismatchedCanonicalizationLayerError(ValueError):
 
 
 def canonical_claim_bytes(
-    raw_bytes: bytes, claim: dict, canonicalization_id: str = VINTAGE_CANONICALIZATION
+    claim: dict,
+    *,
+    canonicalization_id: str = VINTAGE_CANONICALIZATION,
+    raw_bytes: bytes | None = None,
 ) -> bytes:
     """Anchor-leaf preimage bytes for *claim* under *canonicalization_id*
-    (docs/anchor-format.md section 0)."""
+    (docs/anchor-format.md section 0).
+
+    Additive, not breaking: ``canonical_claim_bytes(claim)`` -- every
+    existing call site -- returns byte-for-byte what it always has (the
+    ``sorted-key`` construction). ``canonicalization_id`` and ``raw_bytes``
+    are new, keyword-only, and opt-in.
+    """
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -83,6 +92,12 @@ def canonical_claim_bytes(
             "docs/anchor-format.md section 0."
         )
     if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        if raw_bytes is None:
+            raise ValueError(
+                "canonicalization_id='as-transmitted' requires raw_bytes "
+                "(the producer's exact signed bytes) -- there is nothing to "
+                "re-serialize at this layer, by design"
+            )
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
@@ -104,15 +119,22 @@ def _decode_hash(value: object) -> bytes:
 
 
 def verify_inclusion(
-    raw_bytes: bytes, claim: dict, canonicalization_id: str,
-    leaf_index: int, audit_path: list[bytes],
+    claim: dict, leaf_index: int, audit_path: list[bytes],
     leaf_count: int, merkle_root: bytes,
+    *,
+    canonicalization_id: str = VINTAGE_CANONICALIZATION,
+    raw_bytes: bytes | None = None,
 ) -> bool:
     """Return True iff the claim's leaf is proven included under merkle_root.
 
     Implements the RFC 9162 section 2.1.3.2 inclusion-proof verification over
-    an RFC 6962 tree (docs/anchor-format.md section 5). Raises
-    UnknownCanonicalizationError / MismatchedCanonicalizationLayerError
+    an RFC 6962 tree (docs/anchor-format.md section 5).
+
+    Additive, not breaking: the original five positional parameters are
+    unchanged in name, order, and default behavior. ``canonicalization_id``
+    and ``raw_bytes`` are new, keyword-only, and opt-in.
+
+    Raises UnknownCanonicalizationError / MismatchedCanonicalizationLayerError
     (both ValueError subclasses) instead of returning False when
     *canonicalization_id* itself is invalid -- a construction mismatch is a
     distinct, named failure from "the proof does not verify".
@@ -125,7 +147,10 @@ def verify_inclusion(
         return False
 
     r = hashlib.sha256(
-        LEAF_PREFIX + canonical_claim_bytes(raw_bytes, claim, canonicalization_id)
+        LEAF_PREFIX
+        + canonical_claim_bytes(
+            claim, canonicalization_id=canonicalization_id, raw_bytes=raw_bytes
+        )
     ).digest()
     fn = leaf_index
     sn = leaf_count - 1
@@ -215,13 +240,13 @@ def main(argv: list[str] | None = None) -> int:
         merkle_root = _decode_hash(entry.get("merkle_root"))
         canonicalization_id = entry.get("canonicalization_id", VINTAGE_CANONICALIZATION)
         ok = verify_inclusion(
-            claim_raw,
             claim,
-            canonicalization_id,
             proof.get("leaf_index"),
             audit_path,
             entry.get("leaf_count"),
             merkle_root,
+            canonicalization_id=canonicalization_id,
+            raw_bytes=claim_raw,
         )
     except ValueError as exc:
         print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
