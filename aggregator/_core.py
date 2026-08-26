@@ -96,6 +96,8 @@ class TRACEAggregator:
         git_cwd: Path | None = None,
         producers_dir: Path | None = None,
         verify_signatures: bool = True,
+        checkpoints_dir: Path | None = None,
+        enable_mmr_checkpoints: bool = True,
     ) -> None:
         self._registry_dir = registry_dir
         self._proofs_dir = proofs_dir
@@ -105,6 +107,19 @@ class TRACEAggregator:
         self._git_cwd = git_cwd or registry_dir.parent
         self._producers_dir = producers_dir or (registry_dir.parent / "producers")
         self._verify_signatures = verify_signatures
+
+        # CLL (Checkpointed Local Log) upgrade: every anchored entry also
+        # folds into one aggregator-wide append-only MMR and carries a
+        # signed checkpoint proving, by math, that it honestly extends the
+        # previous entry -- not merely that git history was not rewritten.
+        # See aggregator/_mmr_log.py and docs/mmr-checkpoint.md.
+        self._checkpoint_log = None
+        if enable_mmr_checkpoints:
+            from aggregator._mmr_log import CheckpointLog
+
+            self._checkpoint_log = CheckpointLog(
+                checkpoints_dir or (registry_dir.parent / "checkpoints")
+            )
 
         # Protected by _cond
         self._pending: list[tuple[str, dict]] = []  # (job_id, claim)
@@ -227,6 +242,10 @@ class TRACEAggregator:
                 "batch_id": b_id,
                 "canonicalization_id": _CANONICALIZATION_ID,
             }
+
+            if self._checkpoint_log is not None:
+                cp = self._checkpoint_log.append_entry(entry, timestamp=ts)
+                entry["mmr_checkpoint"] = cp.to_dict()
 
             self._write_registry_entry(entry, ts)
             self._write_proofs(b_id, claims, paths, ts)

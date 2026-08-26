@@ -12,6 +12,34 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.4.0: the CLL (Checkpointed Local Log) checkpoint chain
+  -- cryptographic consistency between anchoring runs, not just git commit
+  history.** Every anchored registry entry now also folds as one leaf into a
+  single, append-only Merkle Mountain Range (MMR) spanning the whole
+  registry, and carries a signed `mmr_checkpoint` (constant-size regardless
+  of log volume, `O(log n)` per append, no per-batch tree rebuild) proving
+  it mathematically extends the previous entry's checkpoint -- not merely
+  that the two records' `prev_root`/`root` fields happen to match (field
+  equality alone is not sufficient evidence of an honest extension; a real
+  MMR consistency/extension proof is required and enforced, see
+  `docs/mmr-checkpoint.md`). Conforms to
+  `draft-mih-scitt-checkpointed-local-log`, and reuses the exact same
+  checkpoint field set and MMR construction already shipped in
+  `capsule-emit`/`capsule-ledger` (pinned against the same 39-node
+  MMRIVER-draft KAT vector, `tests/test_mmr_kat39.py`) rather than a
+  divergent format. Existing per-batch RFC 6962/9162 inclusion proofs
+  (`merkle_root`, `tools/verify_inclusion.py`) are completely unchanged and
+  unaffected -- this is additive. New: `trace_verify._mmr`,
+  `trace_verify._checkpoint` (`CheckpointRecord`,
+  `verify_checkpoint_signature_offline`, `verify_checkpoint_link`,
+  `verify_checkpoint_chain`, all exported from `trace_verify`),
+  `aggregator/_mmr_log.py`, `tools/verify_checkpoint_chain.py` (reference
+  verifier CLI), and an optional `mmr_checkpoint` object on
+  `schema/registry-entry.schema.json`. Complements, and does not replace,
+  `docs/checkpoint-architecture.md` (issue #17)'s separate, not-yet-
+  implemented proposal for a second-level tree over batch roots at high
+  volume -- see `docs/mmr-checkpoint.md` for how the two relate.
+
 - **`trace-verify` 0.3.3 (additive, not breaking): the anchor-leaf
   construction is now a declared, registered `canonicalization_id`
   (docs/anchor-format.md section 0), not an assumed fact of the format.**

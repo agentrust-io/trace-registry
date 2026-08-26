@@ -81,6 +81,17 @@ Inclusion verification proves the signed claim bytes were anchored at the
 entry's timestamp. Validating the claim's signature against the producer key
 is a separate TRACE step.
 
+Batches anchored via the aggregator (below) also carry a signed `mmr_checkpoint`
+proving, by math, that each entry honestly extends the previous one -- not
+just that git history was not rewritten. Verify the whole chain with:
+
+```bash
+python tools/verify_checkpoint_chain.py registry/2026/06/12.ndjson
+```
+
+See [docs/mmr-checkpoint.md](docs/mmr-checkpoint.md) for how this works and
+what it does and does not catch.
+
 ## Anchoring claims
 
 Producers batch signed claims and anchor them with:
