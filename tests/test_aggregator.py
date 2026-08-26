@@ -12,8 +12,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from aggregator._core import TRACEAggregator, _batch_id, _canonical
+from aggregator._core import TRACEAggregator, _batch_id, _canonical, _leaf_hash
+import verify_inclusion  # noqa: E402 -- standalone third-party-style verifier
 
 
 def _claim(producer="test-producer/1.0.0", tag="a"):
@@ -252,6 +254,218 @@ class TestSignatureGate(unittest.TestCase):
         self.assertEqual(list((tmp / "registry").rglob("*.ndjson")), [])
 
 
+class TestLeafHashAdditive(unittest.TestCase):
+    """_leaf_hash(claim) -- the pre-PR-2 call shape -- is unchanged."""
+
+    def test_bare_call_unchanged(self):
+        claim = {"z": 1, "a": 2}
+        self.assertEqual(_leaf_hash(claim), _leaf_hash(claim, canonicalization_id="sorted-key"))
+
+    def test_as_transmitted_requires_raw_bytes(self):
+        with self.assertRaises(ValueError):
+            _leaf_hash({"a": 1}, canonicalization_id="as-transmitted")
+
+    def test_unsupported_canonicalization_id_raises(self):
+        with self.assertRaises(ValueError):
+            _leaf_hash({"a": 1}, canonicalization_id="jcs")
+
+
+class TestAsTransmittedSubmit(unittest.TestCase):
+    """PR-2: a self-attested TRACE record registers by its exact signed
+    bytes -- the aggregator (the live registration path, distinct from the
+    tools/anchor.py CLI) never re-serializes it. docs/anchor-format.md
+    section 0; acceptance per the PR-2 issue: a record registers and
+    verifies without the registry re-hashing it, and the digest matches the
+    producer's own."""
+
+    def test_requires_raw_bytes(self):
+        with tempfile.TemporaryDirectory() as d:
+            agg = _make_agg(Path(d))
+            with self.assertRaises(ValueError):
+                agg.submit([_claim()], canonicalization_id="as-transmitted")
+
+    def test_raw_bytes_length_must_match_claims(self):
+        with tempfile.TemporaryDirectory() as d:
+            agg = _make_agg(Path(d))
+            with self.assertRaises(ValueError):
+                agg.submit(
+                    [_claim(), _claim(tag="b")],
+                    canonicalization_id="as-transmitted",
+                    raw_bytes=[b"{}"],
+                )
+
+    def test_unsupported_canonicalization_id_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            agg = _make_agg(Path(d))
+            with self.assertRaises(ValueError):
+                agg.submit([_claim()], canonicalization_id="jcs", raw_bytes=[b"{}"])
+
+    def test_entry_declares_as_transmitted(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            agg = _make_agg(tmp)
+            claim = _claim()
+            raw = _canonical(claim)
+            agg.submit([claim], canonicalization_id="as-transmitted", raw_bytes=[raw])
+            ndjson_files = list((tmp / "registry").rglob("*.ndjson"))
+            entry = json.loads(ndjson_files[0].read_text())
+        self.assertEqual(entry["canonicalization_id"], "as-transmitted")
+
+    def test_registers_and_verifies_without_registry_rehash(self):
+        """The core PR-2 conformance vector.
+
+        The producer transmits deliberately non-canonical bytes (unsorted
+        keys, extra whitespace) -- exactly the bytes they signed. After
+        registration:
+          1. the stored digest (the merkle leaf, unwound via the standalone
+             verify_inclusion.py tool -- deliberately not aggregator code,
+             so this is an independent check) is proven over those exact
+             raw bytes, not a re-serialization of them;
+          2. re-serializing the parsed claim under sorted-key produces
+             DIFFERENT bytes than what was transmitted -- proving that if
+             the registry had recomputed (as it does for sorted-key
+             registration), the digest would NOT match the producer's own.
+        """
+        claim = {"z_field": 1, "producer": "test-producer/1.0.0", "a_field": 2,
+                  "ts": "2026-06-23T00:00:00Z", "hash": f"sha256:{'0' * 64}",
+                  "signature": "dummy"}
+        raw = json.dumps(claim, sort_keys=False, indent=2).encode("utf-8")
+        producer_digest = hashlib.sha256(raw).hexdigest()
+
+        # If the registry recomputed via sorted-key, the digest would differ --
+        # this is exactly the trap as-transmitted registration closes.
+        rehashed_digest = hashlib.sha256(_canonical(claim)).hexdigest()
+        self.assertNotEqual(producer_digest, rehashed_digest)
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            agg = _make_agg(tmp)
+            results = agg.submit(
+                [claim], canonicalization_id="as-transmitted", raw_bytes=[raw]
+            )
+            proof_files = list((tmp / "proofs").rglob("*.proof.json"))
+            self.assertEqual(len(proof_files), 1)
+            proof = json.loads(proof_files[0].read_text())
+
+        result = results[0]
+        merkle_root = bytes.fromhex(result["merkle_root"].split(":", 1)[1])
+        audit_path = [bytes.fromhex(h.split(":", 1)[1]) for h in result["audit_path"]]
+
+        ok = verify_inclusion.verify_inclusion(
+            claim,
+            proof["leaf_index"],
+            audit_path,
+            1,
+            merkle_root,
+            canonicalization_id="as-transmitted",
+            raw_bytes=raw,
+        )
+        self.assertTrue(ok)
+
+        # The independent verifier's own preimage hash IS the producer's digest --
+        # never a re-serialization of the parsed claim.
+        self.assertEqual(
+            hashlib.sha256(
+                verify_inclusion.canonical_claim_bytes(
+                    claim, canonicalization_id="as-transmitted", raw_bytes=raw
+                )
+            ).hexdigest(),
+            producer_digest,
+        )
+
+    def test_mismatched_construction_does_not_silently_verify(self):
+        """Checking an as-transmitted registration as though it were
+        sorted-key must not silently accept -- the #111 trap this PR-2
+        vector guards against at the aggregator's own registration path."""
+        claim = {"z": 1, "a": 2, "producer": "test-producer/1.0.0"}
+        raw = b'{  "z" :1,  "a":2, "producer":"test-producer/1.0.0"  }'
+
+        with tempfile.TemporaryDirectory() as d:
+            agg = _make_agg(Path(d))
+            results = agg.submit(
+                [claim], canonicalization_id="as-transmitted", raw_bytes=[raw]
+            )
+
+        result = results[0]
+        merkle_root = bytes.fromhex(result["merkle_root"].split(":", 1)[1])
+        ok = verify_inclusion.verify_inclusion(
+            claim, 0, [], 1, merkle_root, canonicalization_id="sorted-key",
+        )
+        self.assertFalse(ok)
+
+    def test_mixed_canonicalizations_same_producer_split_into_separate_batches(self):
+        """A registry entry declares one construction for all its leaves
+        (schema/registry-entry.schema.json) -- claims from the same producer
+        submitted under different constructions in the same flush window
+        must anchor as separate batches, never mixed into one entry."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            agg = _make_agg(tmp, flush_interval=60.0, max_batch_size=2)
+            sorted_key_claim = _claim(tag="sk")
+            as_transmitted_claim = _claim(tag="at")
+            raw = _canonical(as_transmitted_claim)
+
+            results = []
+            errors = []
+
+            def submit_sorted_key():
+                try:
+                    results.extend(agg.submit([sorted_key_claim], timeout=30.0))
+                except Exception as exc:
+                    errors.append(exc)
+
+            def submit_as_transmitted():
+                try:
+                    results.extend(agg.submit(
+                        [as_transmitted_claim],
+                        canonicalization_id="as-transmitted",
+                        raw_bytes=[raw],
+                        timeout=30.0,
+                    ))
+                except Exception as exc:
+                    errors.append(exc)
+
+            t1 = threading.Thread(target=submit_sorted_key)
+            t2 = threading.Thread(target=submit_as_transmitted)
+            t1.start()
+            time.sleep(0.05)  # ensure both land in the same pending window
+            t2.start()
+            t1.join(timeout=30)
+            t2.join(timeout=30)
+
+            ndjson_files = list((tmp / "registry").rglob("*.ndjson"))
+            entries = [json.loads(ln) for ln in ndjson_files[0].read_text().splitlines()]
+
+        self.assertEqual(errors, [])
+        batch_ids = {r["batch_id"] for r in results}
+        self.assertEqual(len(batch_ids), 2, "expected two separate batches, not one mixed batch")
+        canon_ids = {e["canonicalization_id"] for e in entries}
+        self.assertEqual(canon_ids, {"sorted-key", "as-transmitted"})
+
+    def test_distinct_raw_bytes_same_parsed_claim_get_distinct_proof_files(self):
+        """Two claims that parse to the identical dict but were transmitted
+        with different byte-level formatting must not collide on the same
+        proof filename under as-transmitted (docs/anchor-format.md section 0:
+        as-transmitted commits to bytes, not the parsed structure)."""
+        claim = {"producer": "test-producer/1.0.0", "tag": "same"}
+        raw_a = json.dumps(claim, sort_keys=True).encode("utf-8")
+        raw_b = json.dumps(claim, sort_keys=False, indent=4).encode("utf-8")
+        self.assertNotEqual(raw_a, raw_b)
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            agg = _make_agg(tmp, max_batch_size=0, flush_interval=60.0)
+            results = agg.submit(
+                [dict(claim), dict(claim)],
+                canonicalization_id="as-transmitted",
+                raw_bytes=[raw_a, raw_b],
+            )
+            proof_files = list((tmp / "proofs").rglob("*.proof.json"))
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(len(proof_files), 2)
+
+
 class TestHTTPServer(unittest.TestCase):
     def _start_server(self, tmp: Path, flush_interval=0.2):
         from aggregator.server import AggregatorHTTPServer
@@ -343,6 +557,92 @@ class TestHTTPServer(unittest.TestCase):
             status, _ = self._get(port, "/nonexistent")
             server.shutdown()
         self.assertEqual(status, 404)
+
+
+class TestHTTPServerAsTransmitted(unittest.TestCase):
+    """PR-2 over the wire: POST /batch with canonicalization_id='as-transmitted'
+    carries each claim as its exact signed JSON text (a string, not a nested
+    object) so the HTTP layer preserves producer bytes end to end -- the
+    server-side gap this PR closes (do_POST previously only ever parsed
+    claims into dicts, discarding the bytes that were actually signed)."""
+
+    def _start_server(self, tmp: Path, flush_interval=0.2):
+        from aggregator.server import AggregatorHTTPServer
+        agg = _make_agg(tmp, flush_interval=flush_interval)
+        server = AggregatorHTTPServer(("127.0.0.1", 0), agg)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        return server, port
+
+    def _post_raw(self, port, body_bytes: bytes) -> tuple[int, dict]:
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/batch",
+            data=body_bytes,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def test_as_transmitted_claim_registers_and_verifies_over_original_bytes(self):
+        claim_text = '{  "producer": "http-test/1.0.0",\n  "z": 1, "a": 2  }\n'
+        request_body = json.dumps({
+            "canonicalization_id": "as-transmitted",
+            "claims": [claim_text],
+        }).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            server, port = self._start_server(tmp)
+            status, resp = self._post_raw(port, request_body)
+            server.shutdown()
+            ndjson_files = list((tmp / "registry").rglob("*.ndjson"))
+            entry = json.loads(ndjson_files[0].read_text())
+
+        self.assertEqual(status, 200)
+        self.assertEqual(entry["canonicalization_id"], "as-transmitted")
+
+        proof = resp["proofs"][0]
+        merkle_root = bytes.fromhex(entry["merkle_root"].split(":", 1)[1])
+        audit_path = [bytes.fromhex(h.split(":", 1)[1]) for h in proof["audit_path"]]
+        ok = verify_inclusion.verify_inclusion(
+            json.loads(claim_text),
+            proof["leaf_index"],
+            audit_path,
+            entry["leaf_count"],
+            merkle_root,
+            canonicalization_id="as-transmitted",
+            raw_bytes=claim_text.encode("utf-8"),
+        )
+        self.assertTrue(ok, "the transmitted text must verify byte for byte, unmodified")
+
+    def test_as_transmitted_rejects_nested_object_claims(self):
+        request_body = json.dumps({
+            "canonicalization_id": "as-transmitted",
+            "claims": [{"producer": "http-test/1.0.0"}],
+        }).encode("utf-8")
+        with tempfile.TemporaryDirectory() as d:
+            server, port = self._start_server(Path(d))
+            status, resp = self._post_raw(port, request_body)
+            server.shutdown()
+        self.assertEqual(status, 400)
+
+    def test_unsupported_canonicalization_id_returns_400(self):
+        request_body = json.dumps({
+            "canonicalization_id": "jcs",
+            "claims": [{"producer": "http-test/1.0.0"}],
+        }).encode("utf-8")
+        with tempfile.TemporaryDirectory() as d:
+            server, port = self._start_server(Path(d))
+            status, resp = self._post_raw(port, request_body)
+            server.shutdown()
+        self.assertEqual(status, 400)
 
 
 if __name__ == "__main__":
