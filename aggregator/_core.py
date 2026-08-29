@@ -6,6 +6,13 @@ A single threading.Condition wraps the mutable state (_pending, _completed,
 _proof_index). The flush thread holds the lock only long enough to swap the
 pending queue; the Merkle construction and file I/O happen outside the lock.
 Callers in submit() wait on the condition and are woken after each flush.
+
+Anchor-leaf canonicalization
+-----------------------------
+submit() defaults to the sorted-key construction, unchanged. Passing
+canonicalization_id='as-transmitted' (with one raw_bytes entry per claim)
+commits the anchor leaf to each claim's exact transmitted bytes instead --
+the registry never re-serializes it. See docs/anchor-format.md section 0.
 """
 
 from __future__ import annotations
@@ -21,14 +28,20 @@ from pathlib import Path
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
-# The aggregator's submit() API takes already-parsed claim dicts, not raw
-# bytes, so it can only build leaves under the sorted-key construction (the
-# as-transmitted option needs the producer's exact transmitted bytes, which
-# this API does not carry -- offering it here is a wider API change, left as
-# a follow-up). It still DECLARES that construction on every entry
-# (docs/anchor-format.md section 0), closing the trap by declaration here
-# too rather than leaving these entries silently assumption-based.
-_CANONICALIZATION_ID = "sorted-key"
+# CPB anchor-leaf canonicalization constructions the aggregator supports, each
+# selectable per submit() call by a declared canonicalization_id
+# (docs/anchor-format.md section 0). Both are first-class and permanently
+# valid -- neither is a fallback for the other. Mirrors tools/anchor.py's
+# ANCHOR_LEAF_CANONICALIZATIONS; duplicated here deliberately so this module
+# stays self-contained (same convention as tools/verify_inclusion.py).
+_CANONICALIZATION_SORTED_KEY = "sorted-key"
+_CANONICALIZATION_AS_TRANSMITTED = "as-transmitted"
+_ANCHOR_LEAF_CANONICALIZATIONS = frozenset(
+    {_CANONICALIZATION_SORTED_KEY, _CANONICALIZATION_AS_TRANSMITTED}
+)
+# Unchanged from before as-transmitted was wired in here: sorted-key remains
+# the default when a caller does not declare one.
+_CANONICALIZATION_ID = _CANONICALIZATION_SORTED_KEY
 
 
 def _canonical(claim: dict) -> bytes:
@@ -37,8 +50,39 @@ def _canonical(claim: dict) -> bytes:
     ).encode("ascii")
 
 
-def _leaf_hash(claim: dict) -> bytes:
-    return hashlib.sha256(LEAF_PREFIX + _canonical(claim)).digest()
+def _leaf_hash(
+    claim: dict,
+    *,
+    canonicalization_id: str = _CANONICALIZATION_ID,
+    raw_bytes: bytes | None = None,
+) -> bytes:
+    """SHA-256(0x00 || anchor-leaf preimage), the RFC 6962 leaf hash.
+
+    Additive, not breaking: ``_leaf_hash(claim)`` -- every existing call
+    site -- returns byte-for-byte what it always has. ``canonicalization_id``
+    and ``raw_bytes`` are new, keyword-only, and opt-in.
+
+    ``as-transmitted`` commits to *raw_bytes* verbatim -- the producer's exact
+    signed bytes, no re-serialization -- and requires them; there is nothing
+    to re-derive at this layer, by design.
+    """
+    if canonicalization_id == _CANONICALIZATION_AS_TRANSMITTED:
+        if raw_bytes is None:
+            raise ValueError(
+                "canonicalization_id='as-transmitted' requires raw_bytes "
+                "(the producer's exact signed bytes) -- there is nothing to "
+                "re-serialize at this layer, by design"
+            )
+        body = raw_bytes
+    elif canonicalization_id == _CANONICALIZATION_SORTED_KEY:
+        body = _canonical(claim)
+    else:
+        raise ValueError(
+            f"unsupported canonicalization_id {canonicalization_id!r}; "
+            f"registered anchor-leaf constructions: "
+            f"{sorted(_ANCHOR_LEAF_CANONICALIZATIONS)}"
+        )
+    return hashlib.sha256(LEAF_PREFIX + body).digest()
 
 
 def _node_hash(a: bytes, b: bytes) -> bytes:
@@ -107,7 +151,8 @@ class TRACEAggregator:
         self._verify_signatures = verify_signatures
 
         # Protected by _cond
-        self._pending: list[tuple[str, dict]] = []  # (job_id, claim)
+        self._pending: list[tuple[str, dict, str, bytes | None]] = []
+        # (job_id, claim, canonicalization_id, raw_bytes)
         self._completed: dict[str, dict] = {}       # job_id -> result
         self._proof_index: dict[tuple[str, int], dict] = {}  # (batch_id, leaf_index) -> proof
         self._cond = threading.Condition(threading.Lock())
@@ -119,19 +164,50 @@ class TRACEAggregator:
     # Public API
     # ------------------------------------------------------------------
 
-    def submit(self, claims: list[dict], timeout: float = 120.0) -> list[dict]:
+    def submit(
+        self,
+        claims: list[dict],
+        timeout: float = 120.0,
+        *,
+        canonicalization_id: str = _CANONICALIZATION_ID,
+        raw_bytes: list[bytes] | None = None,
+    ) -> list[dict]:
         """Submit claims for anchoring; block until proofs are ready.
 
         Returns a list of result dicts, one per claim, each containing:
             batch_id, leaf_index, audit_path, merkle_root, ts
         Raises TimeoutError if anchoring is not complete within `timeout` seconds.
+
+        Additive, not breaking: ``submit(claims)`` -- every existing call
+        site -- keeps building leaves under ``sorted-key``, unchanged.
+        ``canonicalization_id`` and ``raw_bytes`` are new, keyword-only, and
+        opt-in. Passing ``canonicalization_id='as-transmitted'`` commits the
+        anchor leaf to each claim's exact transmitted bytes -- no
+        re-serialization -- and requires *raw_bytes*, one entry per claim in
+        *claims* order; a claim submitted this way registers and verifies
+        without the registry ever recomputing its bytes (docs/anchor-format.md
+        section 0).
         """
         if not claims:
             return []
+        if canonicalization_id not in _ANCHOR_LEAF_CANONICALIZATIONS:
+            raise ValueError(
+                f"unsupported canonicalization_id {canonicalization_id!r}; "
+                f"registered anchor-leaf constructions: "
+                f"{sorted(_ANCHOR_LEAF_CANONICALIZATIONS)}"
+            )
+        if canonicalization_id == _CANONICALIZATION_AS_TRANSMITTED:
+            if raw_bytes is None or len(raw_bytes) != len(claims):
+                raise ValueError(
+                    "canonicalization_id='as-transmitted' requires one "
+                    "raw_bytes entry per claim -- there is nothing to "
+                    "re-serialize at this layer, by design"
+                )
         job_ids = [uuid.uuid4().hex for _ in claims]
         with self._cond:
-            for jid, claim in zip(job_ids, claims):
-                self._pending.append((jid, claim))
+            for i, (jid, claim) in enumerate(zip(job_ids, claims)):
+                rb = raw_bytes[i] if raw_bytes is not None else None
+                self._pending.append((jid, claim, canonicalization_id, rb))
             if self._max_batch_size > 0 and len(self._pending) >= self._max_batch_size:
                 self._cond.notify_all()
             deadline = time.monotonic() + timeout
@@ -183,39 +259,52 @@ class TRACEAggregator:
     # ------------------------------------------------------------------
 
     def _anchor_batch(
-        self, batch: list[tuple[str, dict]]
+        self, batch: list[tuple[str, dict, str, bytes | None]]
     ) -> tuple[dict[str, dict], dict[tuple[str, int], dict]]:
-        """Group by producer, build Merkle trees, write to disk. Thread-safe
-        (runs outside the lock). Returns (completed, proof_index)."""
+        """Group by (producer, canonicalization_id), build Merkle trees, write
+        to disk. Thread-safe (runs outside the lock). Returns (completed,
+        proof_index).
+
+        Grouping includes canonicalization_id, not just producer: a registry
+        entry declares one construction for all its leaves
+        (schema/registry-entry.schema.json), so claims submitted under
+        different constructions -- even from the same producer in the same
+        flush window -- anchor as separate batches rather than mixing.
+        """
         ts = _now_ts()
         completed: dict[str, dict] = {}
         proof_index: dict[tuple[str, int], dict] = {}
 
-        # Group by producer
-        groups: dict[str, list[tuple[str, dict]]] = {}
-        for jid, claim in batch:
+        groups: dict[tuple[str, str], list[tuple[str, dict, bytes | None]]] = {}
+        for jid, claim, canon_id, raw in batch:
             producer = claim.get("producer", "__unknown__")
-            groups.setdefault(producer, []).append((jid, claim))
+            groups.setdefault((producer, canon_id), []).append((jid, claim, raw))
 
-        for producer, group in groups.items():
+        for (producer, canon_id), group in groups.items():
             # Fail-closed: verify every claim's signature against the producer's
             # registered key before anchoring. Reject the whole group if the
             # producer has no active registered key, or any claim's signature
             # does not verify. Rejected claims are reported back to submit()
             # so callers are not left waiting, but nothing is anchored for them.
             if self._verify_signatures:
-                rejection = self._reject_reason(producer, group)
+                rejection = self._reject_reason(
+                    producer, [(jid, c) for jid, c, _ in group]
+                )
                 if rejection is not None:
-                    for jid, _ in group:
+                    for jid, _, _ in group:
                         completed[jid] = {"rejected": True, "reason": rejection,
                                           "producer": producer}
                     continue
 
-            job_ids = [jid for jid, _ in group]
-            claims = [c for _, c in group]
+            job_ids = [jid for jid, _, _ in group]
+            claims = [c for _, c, _ in group]
+            raws = [r for _, _, r in group]
             b_id = _batch_id(claims)
 
-            leaves = [_leaf_hash(c) for c in claims]
+            leaves = [
+                _leaf_hash(c, canonicalization_id=canon_id, raw_bytes=r)
+                for c, r in zip(claims, raws)
+            ]
             root, paths = _build_tree(leaves)
             root_hex = "sha256:" + root.hex()
 
@@ -225,11 +314,11 @@ class TRACEAggregator:
                 "leaf_count": len(leaves),
                 "producer": producer,
                 "batch_id": b_id,
-                "canonicalization_id": _CANONICALIZATION_ID,
+                "canonicalization_id": canon_id,
             }
 
             self._write_registry_entry(entry, ts)
-            self._write_proofs(b_id, claims, paths, ts)
+            self._write_proofs(b_id, claims, paths, ts, raw_bytes=raws)
 
             for i, jid in enumerate(job_ids):
                 result = {
@@ -276,15 +365,30 @@ class TRACEAggregator:
             fh.write(json.dumps(entry) + "\n")
 
     def _write_proofs(
-        self, batch_id: str, claims: list[dict], paths: list[list[str]], ts: str
+        self,
+        batch_id: str,
+        claims: list[dict],
+        paths: list[list[str]],
+        ts: str,
+        raw_bytes: list[bytes | None] | None = None,
     ) -> None:
+        """Write one proof file per claim, named by a content hash.
+
+        For an as-transmitted claim the stem is derived from its raw bytes,
+        not ``_canonical(claim)`` -- two claims that parse to the same dict
+        but were transmitted with different byte-level formatting (key
+        order, whitespace) are distinct under as-transmitted and must not
+        collide on the same proof filename.
+        """
         date_parts = ts[:10].split("-")
         proof_dir = (
             self._proofs_dir / date_parts[0] / date_parts[1] / date_parts[2] / batch_id
         )
         proof_dir.mkdir(parents=True, exist_ok=True)
         for i, claim in enumerate(claims):
-            stem = hashlib.sha256(_canonical(claim)).hexdigest()[:12]
+            raw = raw_bytes[i] if raw_bytes is not None else None
+            stem_bytes = raw if raw is not None else _canonical(claim)
+            stem = hashlib.sha256(stem_bytes).hexdigest()[:12]
             proof = {"leaf_index": i, "audit_path": paths[i]}
             (proof_dir / f"{stem}.proof.json").write_text(
                 json.dumps(proof, indent=2) + "\n", encoding="utf-8"
