@@ -179,6 +179,10 @@ class TestAdversarialB_OmissionBetweenCheckpoints(unittest.TestCase):
             registry_dir=tmp / "registry", proofs_dir=tmp / "proofs",
             checkpoints_dir=tmp / "checkpoints", verify_signatures=False,
             flush_interval=0.05,
+            # Fixed clock so the registry day-file matches the pinned fixture
+            # date (2026-08-26); otherwise the aggregator writes today's file
+            # and this suite fails once a day. See #51 review.
+            now_ts=lambda: "2026-08-26T00:00:00Z",
         )
         for i in range(6):
             h = hashlib.sha256(f"claim-{i}".encode()).hexdigest()
@@ -332,6 +336,10 @@ class TestPositiveEndToEnd(unittest.TestCase):
                 registry_dir=tmp / "registry", proofs_dir=tmp / "proofs",
                 checkpoints_dir=tmp / "checkpoints", verify_signatures=False,
                 flush_interval=0.05,
+                # Fixed clock so the registry day-file matches the pinned
+                # fixture date (2026-08-26); otherwise the aggregator writes
+                # today's file and this suite fails once a day. See #51 review.
+                now_ts=lambda: "2026-08-26T00:00:00Z",
             )
             all_results = []
             for i in range(8):

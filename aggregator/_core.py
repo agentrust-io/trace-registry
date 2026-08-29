@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 LEAF_PREFIX = b"\x00"
@@ -98,6 +99,7 @@ class TRACEAggregator:
         verify_signatures: bool = True,
         checkpoints_dir: Path | None = None,
         enable_mmr_checkpoints: bool = True,
+        now_ts: Callable[[], str] = _now_ts,
     ) -> None:
         self._registry_dir = registry_dir
         self._proofs_dir = proofs_dir
@@ -107,6 +109,11 @@ class TRACEAggregator:
         self._git_cwd = git_cwd or registry_dir.parent
         self._producers_dir = producers_dir or (registry_dir.parent / "producers")
         self._verify_signatures = verify_signatures
+        # Injectable clock: production uses wall-clock _now_ts; tests pass a
+        # fixed clock so the registry day-file path (derived from this ts) is
+        # deterministic and can straddle a checkpoint/UTC-midnight boundary
+        # without failing once a day (agentrust-io/trace-registry#51 review).
+        self._now_ts = now_ts
 
         # CLL (Checkpointed Local Log) upgrade: every anchored entry also
         # folds into one aggregator-wide append-only MMR and carries a
@@ -202,7 +209,7 @@ class TRACEAggregator:
     ) -> tuple[dict[str, dict], dict[tuple[str, int], dict]]:
         """Group by producer, build Merkle trees, write to disk. Thread-safe
         (runs outside the lock). Returns (completed, proof_index)."""
-        ts = _now_ts()
+        ts = self._now_ts()
         completed: dict[str, dict] = {}
         proof_index: dict[tuple[str, int], dict] = {}
 
