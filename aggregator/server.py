@@ -3,7 +3,14 @@
 Endpoints
 ---------
 POST /batch
-    Body: {"producer": "name/1.0.0", "claims": [{...}, ...]}
+    Body (canonicalization_id defaults to "sorted-key"):
+        {"producer": "name/1.0.0", "claims": [{...}, ...]}
+    Body for as-transmitted registration -- each element of "claims" is the
+    exact JSON text the producer signed, verbatim, as a string (not a nested
+    object): the registry commits to those bytes with no re-serialization
+    (docs/anchor-format.md section 0):
+        {"producer": "name/1.0.0", "canonicalization_id": "as-transmitted",
+         "claims": ["{\\"a\\":1,...}", ...]}
     Returns: {"batch_id": "...", "proofs": [{leaf_index, audit_path, ...}, ...]}
     Blocks until anchored.
 
@@ -54,23 +61,62 @@ class AggregatorHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             if not isinstance(body, dict):
                 raise ValueError("body must be a JSON object")
-            claims = body.get("claims")
-            if not isinstance(claims, list) or not claims:
+            canonicalization_id = body.get("canonicalization_id", "sorted-key")
+            raw_claims = body.get("claims")
+            if not isinstance(raw_claims, list) or not raw_claims:
                 raise ValueError("'claims' must be a non-empty list")
-            # Inject producer field into each claim if not already set
             producer = body.get("producer")
-            if producer:
-                for claim in claims:
-                    if isinstance(claim, dict) and "producer" not in claim:
-                        claim["producer"] = producer
+
+            if canonicalization_id == "as-transmitted":
+                # Each element is the producer's exact signed claim text --
+                # decoding it to bytes (not re-encoding the parsed result) is
+                # what lets the registry commit to it with no re-serialization.
+                claims: list[dict] = []
+                claim_raw_bytes: list[bytes] | None = []
+                for item in raw_claims:
+                    if not isinstance(item, str) or not item:
+                        raise ValueError(
+                            "'claims' must be a list of exact signed-claim "
+                            "JSON text strings when canonicalization_id="
+                            "'as-transmitted'"
+                        )
+                    rb = item.encode("utf-8")
+                    parsed = json.loads(item)
+                    if not isinstance(parsed, dict):
+                        raise ValueError("claim must be a JSON object")
+                    if producer and "producer" not in parsed:
+                        parsed["producer"] = producer
+                    claims.append(parsed)
+                    claim_raw_bytes.append(rb)
+            elif canonicalization_id == "sorted-key":
+                claims = raw_claims
+                claim_raw_bytes = None
+                if not all(isinstance(c, dict) for c in claims):
+                    raise ValueError("'claims' must be a list of JSON objects")
+                if producer:
+                    for claim in claims:
+                        if "producer" not in claim:
+                            claim["producer"] = producer
+            else:
+                raise ValueError(
+                    f"unsupported canonicalization_id {canonicalization_id!r}; "
+                    "expected 'sorted-key' or 'as-transmitted'"
+                )
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             self._send_json(400, {"error": str(exc)})
             return
 
         try:
-            results = self.server.aggregator.submit(claims)
+            results = self.server.aggregator.submit(
+                claims,
+                canonicalization_id=canonicalization_id,
+                raw_bytes=claim_raw_bytes,
+            )
         except TimeoutError as exc:
             self._send_json(504, {"error": str(exc)})
+            return
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
             return
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
