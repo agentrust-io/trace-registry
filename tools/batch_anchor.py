@@ -40,6 +40,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -240,6 +241,56 @@ def verify_group(
 # Anchoring
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Checkpoint chain
+# ---------------------------------------------------------------------------
+
+CHECKPOINT_KEY_ENV = "TRACE_CHECKPOINT_SIGNING_KEY"
+
+
+def load_published_entries(registry_dir: Path) -> list[dict]:
+    """Every published registry entry, in the order it was appended.
+
+    Day files are named registry/YYYY/MM/DD.ndjson, so sorting paths sorts
+    chronologically, and lines within a file are already in append order.
+    """
+    entries: list[dict] = []
+    for path in sorted(registry_dir.rglob("*.ndjson")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
+    return entries
+
+
+def open_checkpoint_log(registry_dir: Path, *, log_id: str):
+    """Open the registry-wide checkpoint log, resuming the published chain.
+
+    The signing identity comes from the TRACE_CHECKPOINT_SIGNING_KEY
+    environment variable (PEM). There is deliberately no on-disk fallback
+    here: a scheduled run in a fresh checkout would silently generate a new
+    identity, publish checkpoints under a key_id nobody has seen, and break
+    the chain a witness is countersigning. No key means no checkpoint, said
+    out loud, rather than a wrong one.
+    """
+    pem = os.environ.get(CHECKPOINT_KEY_ENV)
+    if not pem:
+        return None
+    sys.path.insert(0, str(REPO_ROOT))
+    from aggregator._mmr_log import CheckpointLog, Ed25519CheckpointSigner
+
+    signer = Ed25519CheckpointSigner(None, pem=pem.encode("utf-8"))
+    return CheckpointLog(
+        None,
+        log_id=log_id,
+        signer=signer,
+        replay_entries=load_published_entries(registry_dir),
+    )
+
+
 def anchor_group(
     producer: str,
     records: list[tuple[Path, dict, bytes]],
@@ -249,6 +300,7 @@ def anchor_group(
     proofs_dir: Path,
     dry_run: bool,
     canonicalization_id: str = DEFAULT_CANONICALIZATION,
+    checkpoint_log: object | None = None,
 ) -> dict:
     """Anchor one producer group. Returns a result dict with status and details."""
     leaves = [_leaf_hash(raw, claim, canonicalization_id) for _, claim, raw in records]
@@ -275,6 +327,17 @@ def anchor_group(
         proof_path = proof_batch_dir / (claim_path.stem + ".proof.json")
         proof_files.append((proof_path, json.dumps(proof, indent=2) + "\n"))
 
+    checkpoint = None
+    if checkpoint_log is not None and not dry_run:
+        # Fold this entry into the registry-wide MMR and attach the signed
+        # checkpoint proving it extends the previous one. Done before the
+        # entry is written, because the entry we publish must be the entry
+        # the checkpoint covers. entry_leaf_digest() excludes the
+        # mmr_checkpoint field itself, so attaching it does not disturb the
+        # leaf the checkpoint was just computed over.
+        checkpoint = checkpoint_log.append_entry(entry, timestamp=ts)
+        entry["mmr_checkpoint"] = checkpoint.to_dict()
+
     if not dry_run:
         proof_batch_dir.mkdir(parents=True, exist_ok=True)
         for proof_path, proof_content in proof_files:
@@ -294,6 +357,8 @@ def anchor_group(
         "day_file": str(day_file),
         "proof_dir": str(proof_batch_dir),
         "proofs": [str(p) for p, _ in proof_files],
+        "mmr_size": checkpoint.mmr_size if checkpoint is not None else None,
+        "checkpoint_key_id": checkpoint.key_id if checkpoint is not None else None,
     }
 
 
@@ -348,6 +413,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-verify-signatures", action="store_true",
                         help="DANGEROUS: anchor claims without verifying producer "
                              "signatures (default: verify and reject unverified claims)")
+    parser.add_argument("--log-id", default="trace-registry/v1", metavar="ID",
+                        help="checkpoint chain identifier (default: trace-registry/v1)")
+    parser.add_argument("--require-checkpoints", action="store_true",
+                        help=f"fail if {CHECKPOINT_KEY_ENV} is unset, instead of "
+                             "anchoring without a checkpoint")
     args = parser.parse_args(argv)
 
     staging_dir = Path(args.staging_dir) if args.staging_dir else REPO_ROOT / "staging"
@@ -384,6 +454,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     groups = group_by_producer(records, args.max_batch)
+
+    checkpoint_log = None
+    if not args.dry_run:
+        checkpoint_log = open_checkpoint_log(registry_dir, log_id=args.log_id)
+        if checkpoint_log is None:
+            msg = (
+                f"{CHECKPOINT_KEY_ENV} is not set: anchoring WITHOUT signed "
+                "checkpoints. Entries will carry batch inclusion proofs but "
+                "nothing tying this run to the previous one."
+            )
+            if args.require_checkpoints:
+                if args.as_json:
+                    print(json.dumps({"status": "no_checkpoint_key", "detail": msg}))
+                else:
+                    print(f"FAIL  {msg}", file=sys.stderr)
+                return 1
+            print(f"WARNING: {msg}", file=sys.stderr)
 
     results = []
     failures = 0
@@ -424,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
                 producer, group_records, ts, b_id,
                 registry_dir, proofs_dir, args.dry_run,
                 canonicalization_id=args.canonicalization,
+                checkpoint_log=checkpoint_log,
             )
             move_to_processed(group_records, b_id, processed_dir, args.dry_run)
             if not args.as_json:
@@ -448,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
             "batches": results,
             "ok": failures == 0,
             "dry_run": args.dry_run,
+            "checkpoints": checkpoint_log is not None,
+            "log_id": args.log_id if checkpoint_log is not None else None,
         }, indent=2))
     elif failures:
         print(f"\n{failures}/{len(results)} batch(es) failed", file=sys.stderr)

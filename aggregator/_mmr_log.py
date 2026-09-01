@@ -75,7 +75,7 @@ class Ed25519CheckpointSigner:
     subsequent runs load the same identity rather than rotating silently.
     """
 
-    def __init__(self, key_path: Path) -> None:
+    def __init__(self, key_path: Path | None, *, pem: bytes | None = None) -> None:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
         )
@@ -87,19 +87,34 @@ class Ed25519CheckpointSigner:
             load_pem_private_key,
         )
 
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        if key_path.exists():
-            self._private_key = load_pem_private_key(key_path.read_bytes(), password=None)
-        else:
-            self._private_key = Ed25519PrivateKey.generate()
-            pem = self._private_key.private_bytes(
-                Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+        if pem is not None:
+            # CI path: the identity is supplied out of band (a repository
+            # secret) and never touches the working tree. A checkout is
+            # ephemeral, so a key persisted to disk here would be a NEW
+            # identity on every run -- a fresh key_id and a broken chain
+            # every fifteen minutes.
+            self._private_key = load_pem_private_key(pem, password=None)
+        elif key_path is None:
+            raise ValueError(
+                "Ed25519CheckpointSigner needs either key_path or pem"
             )
-            key_path.write_bytes(pem)
-            try:
-                key_path.chmod(0o600)
-            except OSError:
-                pass  # best-effort on platforms without POSIX permission bits
+        else:
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            if key_path.exists():
+                self._private_key = load_pem_private_key(
+                    key_path.read_bytes(), password=None
+                )
+            else:
+                self._private_key = Ed25519PrivateKey.generate()
+                key_path.write_bytes(
+                    self._private_key.private_bytes(
+                        Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+                    )
+                )
+                try:
+                    key_path.chmod(0o600)
+                except OSError:
+                    pass  # best-effort without POSIX permission bits
 
         public_bytes = self._private_key.public_key().public_bytes(
             Encoding.Raw, PublicFormat.Raw
@@ -126,13 +141,35 @@ class CheckpointLog:
     _NODES_FILENAME = "mmr-nodes.bin"
     _KEY_FILENAME = "checkpoint-signing-key.pem"
 
-    def __init__(self, root_dir: Path, *, log_id: str = "trace-registry/v1") -> None:
+    def __init__(
+        self,
+        root_dir: Path | None,
+        *,
+        log_id: str = "trace-registry/v1",
+        signer: "Ed25519CheckpointSigner | None" = None,
+        replay_entries: list[dict] | None = None,
+    ) -> None:
         import json
 
         self._root_dir = root_dir
         self._log_id = log_id
+
+        if replay_entries is not None:
+            # Stateless mode. The tree is rebuilt from the registry's own
+            # published entries rather than read from mmr-nodes.bin, so a
+            # scheduled job running in a fresh checkout resumes the real
+            # chain instead of starting a new one. See replay_from_entries.
+            if signer is None:
+                raise ValueError("replay mode requires an explicit signer")
+            self._nodes = core.MemoryNodeStore()
+            self._signer = signer
+            self._latest = replay_from_entries(self._nodes, replay_entries, log_id=log_id)
+            return
+
+        if root_dir is None:
+            raise ValueError("CheckpointLog needs a root_dir unless replaying")
         self._nodes = FileNodeStore(root_dir / self._NODES_FILENAME)
-        self._signer = Ed25519CheckpointSigner(root_dir / self._KEY_FILENAME)
+        self._signer = signer or Ed25519CheckpointSigner(root_dir / self._KEY_FILENAME)
 
         latest_path = root_dir / self._LATEST_FILENAME
         self._latest: CheckpointRecord | None = None
@@ -185,6 +222,8 @@ class CheckpointLog:
     def _persist_latest(self, cp: CheckpointRecord) -> None:
         import json
 
+        if self._root_dir is None:
+            return  # stateless: the entry itself carries the checkpoint
         path = self._root_dir / self._LATEST_FILENAME
         path.write_text(json.dumps(cp.to_dict(), sort_keys=True) + "\n", encoding="utf-8")
 
@@ -194,3 +233,53 @@ class CheckpointLog:
 
     def size(self) -> int:
         return self._nodes.size()
+
+
+def replay_from_entries(
+    nodes: "core.NodeAppender",
+    entries: list[dict],
+    *,
+    log_id: str,
+) -> CheckpointRecord | None:
+    """Rebuild the checkpoint log's MMR from already-published entries.
+
+    Only entries that carry an ``mmr_checkpoint`` are folded, in order. That
+    is not a convenience: it is the definition of the tree, and it matches
+    exactly what the independent verifier recomputes
+    (``tools/verify_checkpoint_chain.py``). Entries anchored before
+    checkpointing existed were never leaves of this log and must not become
+    leaves retroactively, or every published root would be wrong.
+
+    Fails closed. If the replayed size or root does not reproduce what the
+    last published checkpoint claims, the registry's history and its
+    checkpoints disagree, and appending a new checkpoint on top would sign
+    over that disagreement. Raise instead.
+    """
+    latest: CheckpointRecord | None = None
+    for entry in entries:
+        cp_dict = entry.get("mmr_checkpoint")
+        if not isinstance(cp_dict, dict):
+            continue
+        core.add_leaf(nodes, core.leaf_hash(entry_leaf_digest(entry)))
+        latest = CheckpointRecord.from_dict(cp_dict)
+
+    if latest is None:
+        return None
+
+    if latest.log_id != log_id:
+        raise ValueError(
+            f"last published checkpoint belongs to log_id={latest.log_id!r}, "
+            f"not {log_id!r} -- refusing to mix two logs' checkpoint chains"
+        )
+
+    size = nodes.size()
+    root = core.root_from_peaks([nodes.node(p) for p in core.peaks(size)]).hex()
+    if size != latest.mmr_size or root != latest.root:
+        raise core.IntegrityError(
+            "replaying the published entries does not reproduce the last "
+            f"published checkpoint: replay gives size={size} root={root}, "
+            f"checkpoint claims size={latest.mmr_size} root={latest.root}. "
+            "The registry and its checkpoint chain disagree; refusing to "
+            "extend the chain over an unexplained divergence."
+        )
+    return latest
