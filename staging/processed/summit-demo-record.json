@@ -1,0 +1,46 @@
+{
+  "eat_profile": "tag:agentrust-io.com,2026:trace-v0.2",
+  "iat": 1787244767,
+  "subject": "spiffe://example.org/agent/planner",
+  "model": {
+    "provider": "example",
+    "model_id": "summarizer-v3",
+    "version": "20260601"
+  },
+  "runtime": {
+    "platform": "azure-cvm-sev-snp",
+    "measurement": "sha384:5b0ce64ad1c1f6375dbda5f760b98526ca1bcf91b8195091afc28e7b024251d68fe32e05af34048d6607678cd23283ff",
+    "firmware_version": "15787368493747273732"
+  },
+  "policy": {
+    "bundle_hash": "sha256:f4c26445ea31e0c9209efe7c065cc398f1100b77bbb9a6124a12a72439da6bb3",
+    "enforcement_mode": "enforce",
+    "version": "cui-summarize-v2.1",
+    "policy_uri": "https://registry.example/policy/cui-summarize-v2.1"
+  },
+  "data_class": "confidential",
+  "tool_transcript": {
+    "hash": "sha256:553494dbca57c42653cc782ef423977ca64ed1917f3423f31e79674f296aacc0",
+    "call_count": 4
+  },
+  "build_provenance": {
+    "slsa_level": 2,
+    "builder": "https://github.com/example-org/agent-runtime/.github/workflows/release.yml",
+    "digest": "sha256:8aacb0f60ce141de3b7f341dd7a488e8281c7d8df9a4c1936a77ec67d4e2a827",
+    "provenance_uri": "https://transparency.example/entries/demo"
+  },
+  "appraisal": {
+    "status": "affirming",
+    "verifier": "https://verifier.example/tpm",
+    "policy_ref": "https://registry.example/policy/tpm2-appraisal-v1",
+    "timestamp": 1787244767
+  },
+  "cnf": {
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "MlMDcC9FD2XTwcHx_cMV7aTqq8sfXlTcyFNSDkqsgSE"
+    }
+  },
+  "signature": "o-gOt6MwCWuizcQ8uHy89Fl4G9e8E_9VXFd0tA0UbMJv9vlQZRStnwJX5b3KVfydXGFMAQAz1hBtzJrrGoVYDQ"
+}
