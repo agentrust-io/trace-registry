@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 LEAF_PREFIX = b"\x00"
@@ -140,6 +141,9 @@ class TRACEAggregator:
         git_cwd: Path | None = None,
         producers_dir: Path | None = None,
         verify_signatures: bool = True,
+        checkpoints_dir: Path | None = None,
+        enable_mmr_checkpoints: bool = True,
+        now_ts: Callable[[], str] = _now_ts,
     ) -> None:
         self._registry_dir = registry_dir
         self._proofs_dir = proofs_dir
@@ -149,6 +153,24 @@ class TRACEAggregator:
         self._git_cwd = git_cwd or registry_dir.parent
         self._producers_dir = producers_dir or (registry_dir.parent / "producers")
         self._verify_signatures = verify_signatures
+        # Injectable clock: production uses wall-clock _now_ts; tests pass a
+        # fixed clock so the registry day-file path (derived from this ts) is
+        # deterministic and can straddle a checkpoint/UTC-midnight boundary
+        # without failing once a day (agentrust-io/trace-registry#51 review).
+        self._now_ts = now_ts
+
+        # CLL (Checkpointed Local Log) upgrade: every anchored entry also
+        # folds into one aggregator-wide append-only MMR and carries a
+        # signed checkpoint proving, by math, that it honestly extends the
+        # previous entry -- not merely that git history was not rewritten.
+        # See aggregator/_mmr_log.py and docs/mmr-checkpoint.md.
+        self._checkpoint_log = None
+        if enable_mmr_checkpoints:
+            from aggregator._mmr_log import CheckpointLog
+
+            self._checkpoint_log = CheckpointLog(
+                checkpoints_dir or (registry_dir.parent / "checkpoints")
+            )
 
         # Protected by _cond
         self._pending: list[tuple[str, dict, str, bytes | None]] = []
@@ -271,7 +293,7 @@ class TRACEAggregator:
         different constructions -- even from the same producer in the same
         flush window -- anchor as separate batches rather than mixing.
         """
-        ts = _now_ts()
+        ts = self._now_ts()
         completed: dict[str, dict] = {}
         proof_index: dict[tuple[str, int], dict] = {}
 
@@ -316,6 +338,10 @@ class TRACEAggregator:
                 "batch_id": b_id,
                 "canonicalization_id": canon_id,
             }
+
+            if self._checkpoint_log is not None:
+                cp = self._checkpoint_log.append_entry(entry, timestamp=ts)
+                entry["mmr_checkpoint"] = cp.to_dict()
 
             self._write_registry_entry(entry, ts)
             self._write_proofs(b_id, claims, paths, ts, raw_bytes=raws)

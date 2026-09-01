@@ -60,6 +60,39 @@
       "type": "string",
       "enum": ["sorted-key", "as-transmitted"],
       "description": "Batch entries only: the CPB anchor-leaf construction this entry's leaves were built under (docs/anchor-format.md section 0). Both are first-class and permanently valid; neither is a fallback for the other. Omitted on entries anchored before this field existed -- those were all built under sorted-key, the only construction that existed at the time; a verifier MUST infer sorted-key for an absent field, never as-transmitted."
+    },
+    "mmr_checkpoint": {
+      "type": "object",
+      "description": "CLL (Checkpointed Local Log, draft-mih-scitt-checkpointed-local-log) signed checkpoint over the aggregator-wide append-only MMR of all registry entries. Additive to (not a replacement for) this entry's own batch merkle_root: the batch proof still proves one claim is in this entry; this proves this entry's anchoring run honestly extends the previous one. See docs/mmr-checkpoint.md. Unrelated to entry_type='checkpoint' (docs/checkpoint-architecture.md's separate, not-yet-implemented two-level batch-of-batches design) -- both may exist in this registry without conflict.",
+      "required": ["v", "kind", "log_id", "mmr_size", "root", "prev_size", "prev_root", "key_id", "timestamp", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "v": {"type": "integer", "const": 1},
+        "kind": {"type": "string", "const": "mmr_checkpoint"},
+        "log_id": {"type": "string", "minLength": 1, "description": "Identifies the append-only MMR log this checkpoint belongs to (one per aggregator deployment today)."},
+        "mmr_size": {"type": "integer", "minimum": 1, "description": "MMR node count (not leaf count) as of this checkpoint."},
+        "root": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Bagged-peaks MMR root at mmr_size, hex-encoded (32 bytes)."},
+        "prev_size": {"type": "integer", "minimum": 0, "description": "mmr_size of the previous checkpoint in this log; 0 for the first checkpoint."},
+        "prev_root": {"type": "string", "pattern": "^([0-9a-f]{64})?$", "description": "root of the previous checkpoint; empty string for the first checkpoint."},
+        "key_id": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Raw 32-byte Ed25519 public key, hex-encoded -- self-contained, no external key registry lookup needed to verify signature."},
+        "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"},
+        "signature": {"type": "string", "pattern": "^[0-9a-f]{128}$", "description": "Hex Ed25519 signature (64 bytes) over the checkpoint signing body."},
+        "consistency_proof": {
+          "type": "object",
+          "description": "MMR consistency (extension) proof tying this checkpoint's root back to prev_root by math, not by field equality. Required on every checkpoint except the first (prev_size=0).",
+          "required": ["v", "kind", "size_a", "size_b", "old_peaks", "witness", "new_peaks"],
+          "additionalProperties": false,
+          "properties": {
+            "v": {"type": "integer", "const": 1},
+            "kind": {"type": "string", "const": "consistency"},
+            "size_a": {"type": "integer", "minimum": 0},
+            "size_b": {"type": "integer", "minimum": 0},
+            "old_peaks": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+            "witness": {"type": "array", "items": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+            "new_peaks": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+          }
+        }
+      }
     }
   },
   "if": {
