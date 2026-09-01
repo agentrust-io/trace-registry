@@ -2,3 +2,10 @@ __pycache__/
 dist/
 *.egg-info/
 .venv/
+
+# Checkpoint signing identity and local MMR state. The signer writes an
+# UNENCRYPTED PKCS8 private key here when run without
+# TRACE_CHECKPOINT_SIGNING_KEY; this repository is public, so the path is
+# ignored rather than relied on to stay out of a `git add -A`.
+checkpoints/
+*.pem

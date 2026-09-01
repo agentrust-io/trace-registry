@@ -38,6 +38,12 @@ jobs:
 
       - name: Run batch anchor pipeline
         id: pipeline
+        env:
+          # The checkpoint chain's signing identity. Without it the run
+          # anchors batches but emits no checkpoint, and --require-checkpoints
+          # turns that into a failure rather than a silent downgrade. The key
+          # is never written to the working tree (see aggregator/_mmr_log.py).
+          TRACE_CHECKPOINT_SIGNING_KEY: ${{ secrets.TRACE_CHECKPOINT_SIGNING_KEY }}
         run: |
           set -euo pipefail
           DRY_RUN_FLAG=""
@@ -50,6 +56,7 @@ jobs:
           python tools/batch_anchor.py \
             --json \
             --max-batch "$MAX_BATCH" \
+            --require-checkpoints \
             $DRY_RUN_FLAG \
             | tee pipeline-report.json
 
