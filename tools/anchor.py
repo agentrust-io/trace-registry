@@ -29,6 +29,13 @@ import json
 import sys
 from pathlib import Path
 
+# This tool is deliberately standalone (docs/anchor-format.md): it reimplements
+# the leaf and tree math rather than importing trace_verify, so a third party
+# can audit it in one file. The checkpoint path below is the one exception,
+# because a second copy of MMR consistency math is exactly the kind of drift
+# tools/verify_checkpoint_chain.py refuses to risk.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
 
@@ -208,6 +215,55 @@ def _load_claim(path: Path) -> tuple[dict, bytes]:
     return claim, raw
 
 
+def _registry_is_chained(registry_dir: Path) -> bool:
+    """True if any published entry carries an mmr_checkpoint."""
+    try:
+        for path in registry_dir.rglob("*.ndjson"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    if isinstance(json.loads(line).get("mmr_checkpoint"), dict):
+                        return True
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return False
+    return False
+
+
+def _checkpoint_and_append(
+    entry: dict, registry_dir: Path, ts: str, no_checkpoint: bool
+) -> None:
+    """Fold the entry into the checkpoint chain and append it, in that order.
+
+    These are one operation, not two. A checkpoint mints against the chain as
+    published, so minting one and then not appending its entry, or minting twice
+    before appending either, produces a chain nobody can reproduce from the
+    registry. Requiring the registry directory here is what makes the printed
+    entry and the published entry the same object.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import batch_anchor
+
+    if not no_checkpoint:
+        log = batch_anchor.open_checkpoint_log(registry_dir, log_id="trace-registry/v1")
+        if log is None:
+            raise SystemExit(
+                f"error: {batch_anchor.CHECKPOINT_KEY_ENV} is not set, so this "
+                "entry cannot be folded into the checkpoint chain. Set it, or "
+                "pass --no-checkpoint to append an entry the chain will not cover."
+            )
+        entry["mmr_checkpoint"] = log.append_entry(entry, timestamp=ts).to_dict()
+
+    year, month, day = ts[:10].split("-")
+    day_file = registry_dir / year / month / (day + ".ndjson")
+    day_file.parent.mkdir(parents=True, exist_ok=True)
+    with day_file.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + chr(10))
+    print(f"appended to {day_file}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Anchor signed TRACE claims: emit a registry entry and inclusion proofs."
@@ -228,6 +284,15 @@ def main(argv: list[str] | None = None) -> int:
                              "section 0)")
     parser.add_argument("--proof-dir", default=".", metavar="DIR",
                         help="directory for <claim-stem>.proof.json files (default: cwd)")
+    parser.add_argument("--registry-dir", default=None, metavar="DIR",
+                        help="registry root. Supplying it folds this entry into "
+                             "the checkpoint chain AND appends it to the correct "
+                             "day file, because the two must happen together. "
+                             "Without it the entry is printed for you to redirect "
+                             "and will sit OUTSIDE the chain.")
+    parser.add_argument("--no-checkpoint", action="store_true",
+                        help="with --registry-dir, append without checkpointing. "
+                             "The entry will not be covered by the chain.")
     args = parser.parse_args(argv)
 
     claim_paths = [Path(p) for p in args.claims]
@@ -251,6 +316,18 @@ def main(argv: list[str] | None = None) -> int:
         proof_path = proof_dir / (claim_path.stem + ".proof.json")
         proof_path.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {proof_path}", file=sys.stderr)
+
+    if args.registry_dir is not None:
+        _checkpoint_and_append(entry, Path(args.registry_dir), ts, args.no_checkpoint)
+    elif _registry_is_chained(REPO_ROOT / "registry"):
+        print(
+            "WARNING: this registry publishes a checkpoint chain, and an entry "
+            "appended by hand is NOT folded into it. The chain will still verify, "
+            "because it only covers the entries it checkpointed, so nothing will "
+            "tell you this entry is outside it. Pass --registry-dir to checkpoint "
+            "and append in one step.",
+            file=sys.stderr,
+        )
 
     print(json.dumps(entry, separators=(", ", ": ")))
     return 0

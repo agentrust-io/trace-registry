@@ -109,6 +109,21 @@ python tools/anchor.py claim1.json claim2.json \
 This emits the registry entry line and writes one inclusion proof per claim to
 hand back to claim holders.
 
+Once the registry publishes a checkpoint chain, pass `--registry-dir` so the
+entry is folded into the chain and appended in the same step:
+
+```bash
+python tools/anchor.py claim1.json --producer my-gateway/1.0.0 \
+  --proof-dir proofs/ --registry-dir registry/
+```
+
+These are one operation, not two. A checkpoint is minted against the chain as
+published, so minting one without appending its entry, or minting two before
+appending either, produces a chain that cannot be reproduced from the
+registry. Without `--registry-dir` the entry is printed for you to redirect and
+is **not** covered by the chain, which nothing downstream will report, because
+the chain only ever claims to cover the entries it checkpointed.
+
 **Through the scheduled pipeline.** Drop claims in `staging/incoming/` and the
 pipeline batches them. Here the producer id **must be a top-level `producer`
 field inside the signed claim body**:
