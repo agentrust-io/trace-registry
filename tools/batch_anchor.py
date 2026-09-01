@@ -161,17 +161,25 @@ def scan_staging(incoming_dir: Path) -> list[tuple[Path, dict, bytes]]:
     return records
 
 
+# Sentinel for claims that carry no top-level 'producer'. Deliberately not a
+# valid producer id (schema/producer-key.schema.json), so it can never resolve
+# to a key file even if the rejection below were ever removed.
+UNKNOWN_PRODUCER = "__unknown__"
+
+
 def group_by_producer(
     records: list[tuple[Path, dict, bytes]], max_batch: int
 ) -> dict[str, list[tuple[Path, dict, bytes]]]:
     """Group records by the 'producer' field in each claim.
 
-    Claims missing a 'producer' field are grouped under '__unknown__'.
+    Claims missing a 'producer' field are grouped under UNKNOWN_PRODUCER and
+    rejected by main() with a reason naming the missing field, since a claim
+    that does not say who signed it cannot be verified against any key.
     If max_batch > 0, each group is truncated to at most max_batch items.
     """
     groups: dict[str, list[tuple[Path, dict, bytes]]] = {}
     for path, claim, raw in records:
-        producer = claim.get("producer", "__unknown__")
+        producer = claim.get("producer", UNKNOWN_PRODUCER)
         groups.setdefault(producer, []).append((path, claim, raw))
     if max_batch > 0:
         groups = {p: items[:max_batch] for p, items in groups.items()}
@@ -478,6 +486,31 @@ def main(argv: list[str] | None = None) -> int:
     for producer, group_records in groups.items():
         claims = [c for _, c, _ in group_records]
         b_id = batch_id_for(claims)
+
+        if producer == UNKNOWN_PRODUCER:
+            # Distinguish "you did not say who you are" from "I do not know
+            # you". Both used to surface as invalid producer id
+            # '__unknown__', which names an internal sentinel and tells a
+            # submitter nothing about what to fix.
+            names = ", ".join(sorted(p.name for p, _, _ in group_records))
+            result = {
+                "status": "rejected",
+                "producer": producer,
+                "batch_id": b_id,
+                "detail": (
+                    "claim has no top-level 'producer' field: " + names + ". "
+                    "This pipeline reads the producer id from inside the signed "
+                    "claim body, because the id is part of what the producer "
+                    "signed. tools/anchor.py takes it as a --producer flag "
+                    "instead; the two paths differ on purpose (README, "
+                    "Anchoring claims)."
+                ),
+            }
+            failures += 1
+            if not args.as_json:
+                print(f"REJECT {names}: no top-level 'producer' field", file=sys.stderr)
+            results.append(result)
+            continue
 
         if not args.no_verify_signatures:
             reason = verify_group(producer, group_records, producers_dir)

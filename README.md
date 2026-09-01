@@ -94,7 +94,11 @@ what it does and does not catch.
 
 ## Anchoring claims
 
-Producers batch signed claims and anchor them with:
+There are two paths, and they disagree on purpose about where the producer id
+comes from. Pick the one that matches how you are submitting.
+
+**By hand.** The producer id is an argument, so the claim itself need not carry
+one:
 
 ```bash
 python tools/anchor.py claim1.json claim2.json \
@@ -104,6 +108,27 @@ python tools/anchor.py claim1.json claim2.json \
 
 This emits the registry entry line and writes one inclusion proof per claim to
 hand back to claim holders.
+
+**Through the scheduled pipeline.** Drop claims in `staging/incoming/` and the
+pipeline batches them. Here the producer id **must be a top-level `producer`
+field inside the signed claim body**:
+
+```json
+{
+  "producer": "my-gateway/1.0.0",
+  "trace": { "...": "..." },
+  "signature": "..."
+}
+```
+
+It has to be inside the body rather than alongside it, because the pipeline
+verifies every claim against the key registered for that producer before
+anchoring anything, and a producer id supplied out of band is an unsigned
+assertion about who signed. A claim with no `producer` field is rejected rather
+than guessed at, and the whole group is rejected if any signature fails.
+
+The id must match a file in `producers/` and the `name/semver` pattern in
+[`schema/producer-key.schema.json`](schema/producer-key.schema.json).
 
 ## Canonical Registry
 
