@@ -1,0 +1,12 @@
+{
+  "producer_id": "verifiable-agent-summit-demo/0.1.0",
+  "key_type": "Ed25519",
+  "public_key_jwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "MlMDcC9FD2XTwcHx_cMV7aTqq8sfXlTcyFNSDkqsgSE",
+    "kid": "summit-demo-mlmdcc9f"
+  },
+  "active_since": "2026-08-20T19:34:17Z",
+  "contact": "security@opaque.co"
+}
