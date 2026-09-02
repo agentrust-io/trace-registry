@@ -15,19 +15,21 @@
 
 ## Honest status
 
-The registry holds **one real entry** (`registry/2026/06/12.ndjson`). The
-machinery is live and the format is real; the volume is not there yet. A scheduled
-run with nothing to anchor is a no-op, so a long gap between entries reflects
-claim volume rather than a broken pipeline.
+The registry holds **two entries**, neither of them production: a software-only
+launch-day example (`registry/2026/06/12.ndjson`) and a demonstration anchor
+produced for a conference session (`registry/2026/09/01.ndjson`). The machinery is
+live and the format is real; the volume is not there yet. A scheduled run with
+nothing to anchor is a no-op, so a long gap between entries reflects claim volume
+rather than a broken pipeline.
 
 Nothing here should be read as "operating at scale". It is a working accountability
 layer waiting for production traffic.
 
 ## Next
 
-- **Production claim volume**, from producers other than the reference gateway. The
-  format is more valuable the more independent producers anchor into it, and
-  right now that number is one.
+- **Production claim volume**, from producers other than our own. The format is more
+  valuable the more independent producers anchor into it, and right now the number
+  of independent producers is zero.
 - **An independent mirror we do not operate.** A mirror run by OPAQUE Systems
   checks almost nothing: the value comes from an operator with no incentive to
   cover for us. See [MIRRORS.md](MIRRORS.md) and

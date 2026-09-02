@@ -41,7 +41,8 @@ one implementation.
 > entries are live. Scheduled anchoring is operational and `trace-verify` is
 > published on PyPI. What is missing is volume: two entries, both produced by us,
 > neither of them production, and no mirror we do not operate.
-> See [ROADMAP.md](ROADMAP.md) for what that means and what would change it.
+> See [ROADMAP.md](ROADMAP.md) for what that means and what would change it, and
+> [LIMITATIONS.md](LIMITATIONS.md) for what an anchor does and does not prove.
 
 ## Why this exists
 
