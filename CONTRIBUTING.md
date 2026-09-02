@@ -49,6 +49,8 @@ A producer is any system that generates signed TRACE Trust Records and anchors t
    ```
    Store the raw 64-byte signature as base64url (no padding) in the top-level `signature` field.
 
+5. Submit records for anchoring by opening a pull request that adds them to `staging/incoming/`, one JSON file per record. The scheduled pipeline picks them up, groups them by `producer`, verifies every signature against your registered key before anchoring anything, and writes an inclusion proof back for each anchored claim; see [`staging/README.md`](staging/README.md) for the outputs and where they land. A record must carry the top-level `producer` field, because a producer id supplied out of band is an unsigned assertion about who signed, and a group is rejected whole if any signature in it fails.
+
 ## Reporting Security Issues
 
 Use [GitHub Security Advisories](https://github.com/agentrust-io/trace-registry/security/advisories/new) rather than opening a public issue.
