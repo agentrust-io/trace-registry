@@ -171,3 +171,6 @@ The code was previously under CC BY 4.0, which Creative Commons itself recommend
 against for software: no patent grant, no software-tailored warranty disclaimer,
 and not OSI-approved. Mirroring this registry means running that code, so it needs
 a license written for software.
+
+Using or submitting to the registry is covered by [TERMS.md](TERMS.md), which states
+what anchoring does not mean, what you grant by submitting, and the removal position.
