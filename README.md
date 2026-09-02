@@ -16,14 +16,20 @@ semantics, and mirror operation.
 
 ## Current Registry State
 
-The registry currently contains **one** entry (`registry/2026/06/12.ndjson`). It is
-a software-only example anchor with advisory enforcement and a zeroed measurement,
-committed as a launch-day example. It does not represent a production Trust Record,
-and no production entries have been anchored yet.
+The registry currently contains **two** entries, and neither is a production Trust
+Record.
+
+- `registry/2026/06/12.ndjson`, producer `cmcp-gateway`, is a software-only example
+  anchor with advisory enforcement and a zeroed measurement, committed as a
+  launch-day example.
+- `registry/2026/09/01.ndjson`, producer `verifiable-agent-summit-demo`, is a
+  demonstration anchor produced for a conference session.
+
+No production entries have been anchored yet.
 
 The anchoring pipeline is live and runs on a schedule, verifying producer signatures
 before it anchors anything. A scheduled run with nothing to anchor is a no-op, so the
-gap since June reflects claim volume rather than a stalled pipeline.
+gaps between entries reflect claim volume rather than a stalled pipeline.
 
 The anchor construction (canonical claim bytes, leaf hashing, RFC 6962 Merkle
 tree, inclusion proofs) is specified in
@@ -31,10 +37,10 @@ tree, inclusion proofs) is specified in
 verifier from that document alone; the reference tools in [tools/](tools/) are
 one implementation.
 
-> **Status.** The format, reference tooling, schema validation, and a first
-> real entry ([registry/2026/06/12.ndjson](registry/2026/06/12.ndjson)) are live.
-> Scheduled anchoring is operational and `trace-verify` is published on PyPI. What
-> is missing is volume: one entry, one producer, and no mirror we do not operate.
+> **Status.** The format, reference tooling, schema validation, and two anchored
+> entries are live. Scheduled anchoring is operational and `trace-verify` is
+> published on PyPI. What is missing is volume: two entries, both produced by us,
+> neither of them production, and no mirror we do not operate.
 > See [ROADMAP.md](ROADMAP.md) for what that means and what would change it.
 
 ## Why this exists
