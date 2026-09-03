@@ -51,6 +51,14 @@ A producer is any system that generates signed TRACE Trust Records and anchors t
 
 5. Submit records for anchoring by opening a pull request that adds them to `staging/incoming/`, one JSON file per record. The scheduled pipeline picks them up, groups them by `producer`, verifies every signature against your registered key before anchoring anything, and writes an inclusion proof back for each anchored claim; see [`staging/README.md`](staging/README.md) for the outputs and where they land. A record must carry the top-level `producer` field, because a producer id supplied out of band is an unsigned assertion about who signed, and a group is rejected whole if any signature in it fails.
 
+## Using AI to contribute
+
+Use agents. A lot of this was built with them and saying otherwise would be dishonest.
+
+The rule is that you have to understand what you submit. If you cannot explain what your change does and how it interacts with the rest of the system, with the agent closed, do not open the pull request. Reviewing a change nobody can explain costs more than writing it did, and it becomes someone else's problem the moment it merges.
+
+That is a rule about understanding, not about tooling.
+
 ## Reporting Security Issues
 
 Use [GitHub Security Advisories](https://github.com/agentrust-io/trace-registry/security/advisories/new) rather than opening a public issue.
