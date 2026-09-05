@@ -44,13 +44,18 @@ jobs:
           # turns that into a failure rather than a silent downgrade. The key
           # is never written to the working tree (see aggregator/_mmr_log.py).
           TRACE_CHECKPOINT_SIGNING_KEY: ${{ secrets.TRACE_CHECKPOINT_SIGNING_KEY }}
+          # workflow_dispatch inputs are free text. This step holds the
+          # checkpoint signing key, so they are read as values, never
+          # substituted into the script before bash parses it.
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_MAX_BATCH: ${{ github.event.inputs.max_batch }}
         run: |
           set -euo pipefail
           DRY_RUN_FLAG=""
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
-          MAX_BATCH="${{ github.event.inputs.max_batch }}"
+          MAX_BATCH="$INPUT_MAX_BATCH"
           MAX_BATCH="${MAX_BATCH:-0}"
 
           python tools/batch_anchor.py \
@@ -94,6 +99,8 @@ jobs:
 
       - name: Commit anchored batches (signed)
         if: steps.pipeline.outputs.anchored_count != '0'
+        env:
+          ANCHORED_COUNT: ${{ steps.pipeline.outputs.anchored_count }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -101,7 +108,7 @@ jobs:
 
           git add registry/ proofs/ staging/
 
-          BATCH_COUNT="${{ steps.pipeline.outputs.anchored_count }}"
+          BATCH_COUNT="$ANCHORED_COUNT"
           TS=$(python -c "import json; r=json.load(open('pipeline-report.json')); print(r['ts'])")
 
           # Keyless Sigstore signature; identity is bound to this workflow's OIDC
