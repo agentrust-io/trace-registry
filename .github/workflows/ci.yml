@@ -6,11 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -44,18 +47,24 @@ jobs:
 
       - name: Determine base SHA for append-only check
         id: base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "sha=$PR_BASE_SHA" >> "$GITHUB_OUTPUT"
+          elif [ "$PUSH_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
             echo "sha=" >> "$GITHUB_OUTPUT"
           else
-            echo "sha=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "sha=$PUSH_BEFORE_SHA" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check registry is append-only
         if: steps.base.outputs.sha != ''
-        run: python tools/check_append_only.py "${{ steps.base.outputs.sha }}"
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: python tools/check_append_only.py "$BASE_SHA"
 
       - name: Validate registry entries against schema
         run: python tools/validate_registry.py
