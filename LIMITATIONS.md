@@ -38,8 +38,10 @@ intent rather than on structure. See [MIRRORS.md](MIRRORS.md) and
 [docs/mirroring.md](docs/mirroring.md).
 
 **The log is not witnessed by anything outside itself.**
-Anchoring this registry's own history into an external transparency log is on the roadmap and is
-not built. Today the tamper-evidence is git plus mirrors, which is a record we host.
+Checkpoints make the log's history self-consistent, but consistency checked only by the operator
+is still the operator's word. Countersigning by an independent witness is agreed in principle and
+not yet demonstrated: no external witness receipt has been returned and verified offline. Until
+one has been, the tamper-evidence is git plus checkpoints plus mirrors, all of which we host.
 
 ## What is in the log today
 
@@ -59,10 +61,14 @@ Anchoring verifies a submission's signature against a registered producer key. D
 given producer key legitimately represents the organization it claims to is not something this
 registry does or can do for you.
 
-**Not checkpointed.**
-Checkpointing is designed ([docs/checkpoint-architecture.md](docs/checkpoint-architecture.md))
-with explicit thresholds and is deliberately not built, because current volume does not warrant
-it. Verification cost therefore grows with log size.
+**Checkpointed, but only from the first checkpoint onward.**
+Signed MMR checkpoints are built and running in the scheduled pipeline
+([docs/checkpoint-architecture.md](docs/checkpoint-architecture.md)). Checkpoint 1 was published
+on 2026-09-01 under `log_id trace-registry/v1`. Two consequences a verifier should know. The
+checkpoint chain folds **only** entries that carry an `mmr_checkpoint`, so the pre-checkpoint
+entry of 2026-06-12 was never a leaf of this log and is deliberately never folded in
+retroactively. And a checkpoint attests consistency of the log's own history, which is not the
+same as coverage: see "What an anchor does not prove" above.
 
 **Reference tooling is one implementation, not the definition.**
 The anchor construction is specified in [docs/anchor-format.md](docs/anchor-format.md) so that a
