@@ -1,0 +1,8 @@
+# Third-party runtime dependencies, mirroring [project.dependencies].
+# Installed with --require-hashes before the local package goes in --no-deps,
+# because pip cannot hash-pin an editable install in the same invocation.
+# Compile with:
+#   uv pip compile requirements/runtime.in --generate-hashes --universal \
+#     --python-version 3.12 -o requirements/runtime.txt
+cryptography>=41.0
+rfc8785>=0.1.2

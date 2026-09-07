@@ -1,0 +1,5 @@
+# CI tooling for the schema/structural checks. Compile with:
+#   uv pip compile requirements/ci.in --generate-hashes --universal \
+#     --python-version 3.12 -o requirements/ci.txt
+jsonschema==4.26.0
+hatchling
