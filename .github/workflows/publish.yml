@@ -29,14 +29,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: pip install --require-hashes -r requirements/publish.txt
 
       - name: Build wheel and sdist
         run: python -m build
 
       - name: Validate artifacts
         run: |
-          pip install twine
           twine check dist/*
           ls -lh dist/
 
