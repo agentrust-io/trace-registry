@@ -77,10 +77,12 @@ jobs:
       - name: Write job summary
         if: always()
         run: |
-          echo "## Anchor pipeline report" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat pipeline-report.json >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Anchor pipeline report"
+            echo '```json'
+            cat pipeline-report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install and configure gitsign (keyless commit signing)
         if: steps.pipeline.outputs.anchored_count != '0'
