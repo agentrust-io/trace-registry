@@ -1,0 +1,35 @@
+{
+  "source_commit": "6138335",
+  "source_path": "registry/2026/09/01.ndjson",
+  "request_sha256": "fbe911000ca9727e6c5e0ec90aa97fd4651c2139ee949ae3d6f4d8bbd42dea6e",
+  "checkpoint_signing_digest": "41138372adb1921186ca6a0dbc3433a0ea2f6475cb863205603ab1231968f99a",
+  "registry_signature_verified": true,
+  "witness_key_hex": "39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5",
+  "witness_key_id": "19a9ab3e02fad55c",
+  "events": [
+    {
+      "method": "POST",
+      "url": "https://witness.agentactioncapsule.org/checkpoints",
+      "status": 200,
+      "status_source": "inferred from saved receipt response after capture logging error",
+      "response_file": "witness-post.json",
+      "sha256": "5d18656939f5521fb5761e7f19ca40b030619688a8415fea753834c6fa739624"
+    },
+    {
+      "method": "GET",
+      "url": "https://witness.agentactioncapsule.org/checkpoints/trace-registry/v1",
+      "status": 200,
+      "response_file": "witness-readback.json",
+      "sha256": "1e7efbe2ef0f3abbe8d4639bae5429d00ebf745b345fc303ae5051f53e2b0a81",
+      "captured_at": "2026-09-08T00:37:04.441591+00:00"
+    },
+    {
+      "method": "GET",
+      "url": "https://witness.agentactioncapsule.org/v1/inclusion/41138372adb1921186ca6a0dbc3433a0ea2f6475cb863205603ab1231968f99a",
+      "status": 200,
+      "response_file": "witness-inclusion.json",
+      "sha256": "8a6f1edc211e3bab861e1c9eb3bb051bec8ae4e0d7b3bc13e6b1d0f45358e824",
+      "captured_at": "2026-09-08T00:37:04.651099+00:00"
+    }
+  ]
+}

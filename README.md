@@ -44,12 +44,22 @@ one implementation.
 > See [ROADMAP.md](ROADMAP.md) for what that means and what would change it, and
 > [LIMITATIONS.md](LIMITATIONS.md) for what an anchor does and does not prove.
 
+## External witness receipt
+
+Checkpoint 1 now has an offline-verifiable receipt from an independently operated witness.
+The [September 7 evidence packet](docs/evidence/witness-2026-09-07/README.md) includes the
+original checkpoint, returned receipt, separately fetched copies, key provenance and verifier.
+It proves inclusion of that checkpoint signing-body digest under the pinned witness key.
+It does not certify continuity or a witness time; the response's grade is unsigned metadata.
+The pipeline does not yet submit future checkpoints automatically. Parallel independent
+witnesses remain supported as a deployment choice; only one operator is demonstrated here.
+
 ## Why this exists
 
 Anyone holding a TRACE trust record and its inclusion proof can verify that the
 record was anchored in this registry without trusting the operator who issued
-it, using only this public git history and the verifier below. No single
-operator controls the audit trail.
+it, using only this public git history and the verifier below. Independent observations and retained checkpoints help expose divergent histories;
+one receipt does not prove that every observer received the same history.
 
 ## Registry Format
 

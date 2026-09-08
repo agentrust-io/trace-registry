@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: pip install --require-hashes -r requirements/ci.txt
 
+      - name: Install offline witness verification dependencies
+        run: pip install --require-hashes -r requirements/witness.txt
+
       - name: Install trace-verify package (editable)
         # The signature extra, not the bare package: the pre-image is RFC 8785
         # and verify_signature now refuses to guess at it rather than falling
