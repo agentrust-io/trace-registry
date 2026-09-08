@@ -37,11 +37,20 @@ organization with no incentive to cover for us holds a copy, the independence cl
 intent rather than on structure. See [MIRRORS.md](MIRRORS.md) and
 [docs/mirroring.md](docs/mirroring.md).
 
-**The log is not witnessed by anything outside itself.**
-Checkpoints make the log's history self-consistent, but consistency checked only by the operator
-is still the operator's word. Countersigning by an independent witness is agreed in principle and
-not yet demonstrated: no external witness receipt has been returned and verified offline. Until
-one has been, the tamper-evidence is git plus checkpoints plus mirrors, all of which we host.
+**One checkpoint has an independently operated witness receipt.**
+Checkpoint 1's signing-body digest is included under a root signed by Action State's witness key.
+The receipt returned on September 7, 2026 (Pacific time) verifies offline against an explicit
+key pin, and matches the separately fetched receipt. See
+[the evidence packet](docs/evidence/witness-2026-09-07/README.md).
+
+This is a one-checkpoint demonstration, not continuous or reciprocal witnessing. It does not
+prove registry continuity, prevent split views, cover the June entry, or prove payload retention.
+The JSON response reports `countersigned-observed`, but that grade is not signed inside this
+receipt. The receipt signs a Merkle root without a witness timestamp: the checkpoint timestamp
+is the registry signer's assertion, and our capture time is an observer's local record. Do not
+present either as a cryptographically authenticated witness time. The receipt binds the
+checkpoint's nine-field signing body by digest; its signature and optional consistency proof
+are not included in that witnessed digest. Registry signature verification is a separate check.
 
 ## What is in the log today
 

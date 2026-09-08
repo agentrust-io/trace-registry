@@ -11,9 +11,10 @@ commit hashes around.
 A *checkpoint* closes that gap. Every registry entry, in addition to its own
 batch Merkle root, commits a signed snapshot of one running MMR log's peak
 set: ``{v, kind, log_id, mmr_size, root, prev_size, prev_root, key_id,
-timestamp, signature}`` (the CLL shape ratified across ``capsule-emit`` and
-``capsule-ledger`` -- this module intentionally uses the identical field set,
-not a divergent one, per draft-mih-scitt-checkpointed-local-log). Checkpoint
+timestamp, signature}``. The witness's COSE form uses different field names
+and encoding: the same checkpoint discipline, an explicit name mapping, and
+two wire formats. This module defines the registry's existing JSON form; it
+does not claim an identical field set or COSE interoperability. Checkpoint
 N+1 also carries an MMR ``ConsistencyProof`` (``trace_verify._mmr
 .ConsistencyProof``) proving, by math, that its tree structurally extends
 checkpoint N's tree -- not merely that the two records' ``prev_root``/``root``

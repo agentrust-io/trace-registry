@@ -36,15 +36,17 @@ layer waiting for production traffic.
   [docs/mirroring.md](docs/mirroring.md).
 - **Maintainers from outside OPAQUE Systems** ([MAINTAINERS.md](MAINTAINERS.md)),
   for the same reason.
-- **Checkpointing**, when volume warrants it. The design exists
-  ([docs/checkpoint-architecture.md](docs/checkpoint-architecture.md)) with explicit
-  thresholds; building it before those thresholds are met would be premature.
+- **Automated submission to independent witnesses**, with receipts retained and verified
+  under explicit key policies. Checkpointing itself is live since September 1;
+  the first external receipt is a manual demonstration, not a deployed submission loop.
+- **Receipt-bound witness time and grade**, if those properties are required by policy.
+  The captured receipt authenticates a root, not the response's grade or an observation time.
 
 ## Later
 
-- Anchoring into an external transparency log, so this registry's own history is
-  witnessed by something outside it. Today the tamper-evidence is git plus mirrors,
-  which is good but is still a record we host.
+- Parallel witnesses and an independent mirror. The September 7 receipt demonstrates
+  one checkpoint at one external operator; see the evidence packet linked from README.
+  A second operator, continuous submission and independent split-view monitoring remain open.
 - A conformance suite for third-party verifier implementations, so "I implemented
   the anchor format" is checkable rather than asserted.
 
