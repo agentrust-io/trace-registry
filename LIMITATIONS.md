@@ -46,9 +46,13 @@ key pin, and matches the separately fetched receipt. See
 This is a one-checkpoint demonstration, not continuous or reciprocal witnessing. It does not
 prove registry continuity, prevent split views, cover the June entry, or prove payload retention.
 The JSON response reports `countersigned-observed`, but that grade is not signed inside this
-receipt. The receipt signs a Merkle root without a witness timestamp: the checkpoint timestamp
-is the registry signer's assertion, and our capture time is an observer's local record. Do not
-present either as a cryptographically authenticated witness time. The receipt binds the
+receipt, and this receipt signs a Merkle root without a witness timestamp: the checkpoint
+timestamp is the registry signer's assertion, and our capture time is an observer's local
+record. Do not present either as a cryptographically authenticated witness time. Both are
+properties of a receipt rather than of the profile. A witness may sign a registration time as
+a CWT `iat` and its grade under a private-use label; where it does, `verify_witness_receipt`
+reports `witness_time_established` and `grade_cryptographically_bound`, and where it does not,
+both stay false. Read those two fields rather than this paragraph. The receipt binds the
 checkpoint's nine-field signing body by digest; its signature and optional consistency proof
 are not included in that witnessed digest. Registry signature verification is a separate check.
 
