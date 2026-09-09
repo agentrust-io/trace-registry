@@ -124,3 +124,74 @@ class WitnessReceiptTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SignedReceiptMetadataTests(unittest.TestCase):
+    """The post-fix wire shape: a witness clock and a grade inside the signature.
+
+    These receipts are minted here, unlike every test above, because the
+    captured one predates the change. What is borrowed from the capture is
+    the inclusion proof and the root it commits to; the protected header and
+    the signature over it are ours, so nothing here asserts that the witness
+    has deployed anything.
+    """
+
+    setUp = WitnessReceiptTests.setUp
+    check = WitnessReceiptTests.check
+
+    def mint(self, headers, *, grade=None):
+        import cbor2
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        root = bytes.fromhex(self.check()['root'])
+        envelope = cbor2.loads(base64.b64decode(self.response['receipt_b64'])).value
+        protected = cbor2.dumps(headers)
+        key = Ed25519PrivateKey.generate()
+        signature = key.sign(cbor2.dumps(['Signature1', protected, b'', root]))
+        receipt = cbor2.dumps(cbor2.CBORTag(18, [protected, envelope[1], None, signature]))
+        response = copy.deepcopy(self.response)
+        response['receipt_b64'] = base64.b64encode(receipt).decode()
+        if grade is not None:
+            response['grade'] = grade
+        public = key.public_key().public_bytes_raw().hex()
+        return self.check(response=response, witness_key=public)
+
+    def test_captured_receipt_carries_no_signed_metadata(self):
+        result = self.check()
+        self.assertIsNone(result['signed_iat'])
+        self.assertIsNone(result['signed_grade'])
+        self.assertFalse(result['limits']['witness_time_established'])
+
+    def test_signed_iat_is_surfaced_and_establishes_witness_time(self):
+        result = self.mint({1: -8, 395: 1, 15: {6: 1788914655}})
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['signed_iat'], 1788914655)
+        self.assertTrue(result['limits']['witness_time_established'])
+        self.assertFalse(result['limits']['grade_cryptographically_bound'])
+
+    def test_signed_grade_binds_only_when_it_matches_the_response(self):
+        agreeing = self.mint({1: -8, 395: 1, -65537: 'countersigned-observed'},
+                             grade='countersigned-observed')
+        self.assertTrue(agreeing['verified'], agreeing)
+        self.assertTrue(agreeing['limits']['grade_cryptographically_bound'])
+        disagreeing = self.mint({1: -8, 395: 1, -65537: 'countersigned-observed'},
+                                grade='mmr-verified')
+        self.assertTrue(disagreeing['verified'], disagreeing)
+        self.assertFalse(disagreeing['limits']['grade_cryptographically_bound'])
+
+    def test_unreviewed_signed_header_is_refused(self):
+        result = self.mint({1: -8, 395: 1, 1234: 'anything'})
+        self.assertFalse(result['verified'])
+        self.assertIn('unreviewed signed receipt headers', result['error'])
+
+    def test_cwt_claims_map_carries_iat_and_nothing_else(self):
+        for claims in ({6: 1788914655, 1: 'issuer'}, {}, {6: -1}, {6: 'today'}):
+            with self.subTest(claims=claims):
+                result = self.mint({1: -8, 395: 1, 15: claims})
+                self.assertFalse(result['verified'], result)
+
+    def test_neither_field_present_is_the_pre_fix_shape(self):
+        result = self.mint({1: -8, 395: 1})
+        self.assertTrue(result['verified'], result)
+        self.assertIsNone(result['signed_iat'])
+        self.assertIsNone(result['signed_grade'])
+        self.assertFalse(any(result['limits'].values()))

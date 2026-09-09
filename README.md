@@ -50,7 +50,9 @@ Checkpoint 1 now has an offline-verifiable receipt from an independently operate
 The [September 7 evidence packet](docs/evidence/witness-2026-09-07/README.md) includes the
 original checkpoint, returned receipt, separately fetched copies, key provenance and verifier.
 It proves inclusion of that checkpoint signing-body digest under the pinned witness key.
-It does not certify continuity or a witness time; the response's grade is unsigned metadata.
+It does not certify continuity. Whether a receipt carries a witness time or a signed grade is
+a property of that receipt, so the verifier reports `witness_time_established` and
+`grade_cryptographically_bound` rather than asserting either. Both are false for this capture.
 The pipeline does not yet submit future checkpoints automatically. Parallel independent
 witnesses remain supported as a deployment choice; only one operator is demonstrated here.
 

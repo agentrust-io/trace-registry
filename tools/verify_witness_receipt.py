@@ -29,6 +29,49 @@ def load_json(path):
     return json.loads(Path(path).read_bytes(), object_pairs_hook=unique)
 
 
+
+# COSE protected-header labels this adapter accepts. alg and vds are the
+# stage-1 profile. 15 is the CWT Claims map (RFC 9597 s2), carrying 6, iat
+# (RFC 8392 s3.1.6), the witness clock at registration. -65537 is private
+# use: a witness may put its grade there, and a private-use label has no
+# registered meaning, so it is read as an opaque string and only counts
+# once it agrees with the grade the response reports. Anything else is
+# refused rather than ignored: unreviewed signed metadata is not neutral.
+# Duplicate labels collapse in the CBOR decoder rather than raising; that is
+# tolerable here only because these bytes are inside the witness signature.
+CWT_CLAIMS = 15
+CWT_IAT = 6
+PRIVATE_GRADE = -65537
+ALLOWED_PROTECTED = {1, 395, CWT_CLAIMS, PRIVATE_GRADE}
+
+
+def read_protected(protected, decode):
+    """Return (iat, grade) from the protected header, refusing anything else."""
+    if not isinstance(protected, (bytes, bytearray)) or not protected:
+        raise ValueError('receipt protected header must be a non-empty bstr')
+    headers = decode(protected)
+    if not isinstance(headers, dict):
+        raise ValueError('receipt protected header must decode to a map')
+    if headers.get(1) != -8 or headers.get(395) != 1:
+        raise ValueError('unsupported receipt algorithm or verifiable data structure')
+    unknown = set(headers) - ALLOWED_PROTECTED
+    if unknown:
+        raise ValueError('unreviewed signed receipt headers: ' + ', '.join(map(str, sorted(unknown, key=str))))
+    iat = None
+    if CWT_CLAIMS in headers:
+        claims = headers[CWT_CLAIMS]
+        if not isinstance(claims, dict) or set(claims) != {CWT_IAT}:
+            raise ValueError('CWT claims map must carry iat and nothing else')
+        iat = claims[CWT_IAT]
+        if type(iat) is not int or iat <= 0:
+            raise ValueError('CWT iat must be a positive integer')
+    grade = None
+    if PRIVATE_GRADE in headers:
+        grade = headers[PRIVATE_GRADE]
+        if not isinstance(grade, str) or not grade:
+            raise ValueError('private-use grade label must be a non-empty text string')
+    return iat, grade
+
 def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
     import cbor2
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -84,8 +127,9 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
         if envelope is None or len(envelope) != 4:
             raise ValueError('receipt must be tagged COSE_Sign1')
         protected, unprotected, payload, signature = envelope
-        if protected != cbor2.dumps({1: -8, 395: 1}) or payload is not None:
+        if payload is not None:
             raise ValueError('unsupported receipt protected headers or attached payload')
+        signed_iat, signed_grade = read_protected(protected, cbor2.loads)
         if set(unprotected) != {396} or set(unprotected[396]) != {-1} or len(unprotected[396][-1]) != 1:
             raise ValueError('expected exactly one inclusion proof')
         checks['receipt_profile'] = True
@@ -101,7 +145,14 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
         checks['response_coordinates'] = True
         result.update(verified=True, checkpoint_signing_digest=digest.hex(), entry_hash=entry_hash,
                       root=verified.root, leaf_index=verified.leaf_index, tree_size=verified.tree_size,
-                      reported_grade=response.get('grade'), witness_key=witness_key)
+                      reported_grade=response.get('grade'), signed_iat=signed_iat,
+                      signed_grade=signed_grade, witness_key=witness_key)
+        # A signed iat is a witness clock inside the covered bytes. A signed
+        # grade counts only when it is the grade the response reports: a
+        # private-use label agreeing with untrusted metadata is what binds it.
+        result['limits']['witness_time_established'] = signed_iat is not None
+        result['limits']['grade_cryptographically_bound'] = (
+            signed_grade is not None and signed_grade == response.get('grade'))
     except Exception as exc:
         result['error'] = type(exc).__name__ + ': ' + str(exc)
     return result
