@@ -56,6 +56,18 @@ both stay false. Read those two fields rather than this paragraph. The receipt b
 checkpoint's nine-field signing body by digest; its signature and optional consistency proof
 are not included in that witnessed digest. Registry signature verification is a separate check.
 
+Two properties of that reading are agreements with the witness operator rather than properties
+of COSE or of RFC 9597, and are recorded here so either side can cite them. The accepted CWT
+claim set is exactly `iat`: RFC 9597's claims map is general, so a witness adding `iss`, `sub`
+or any other registered claim is refused as unreviewed until this line changes, which makes it
+a coordinated change rather than an outage. And the grade label `-65537` is provisional, chosen
+from the private-use range by bilateral agreement rather than registered; a third implementer
+must not read it as standard, and if a registered label is assigned the value moves under a
+migration note sent before the change. A signed `iat` is also required to fall between the
+checkpoint's own timestamp and thirty days after it, because a witness cannot have registered a
+checkpoint that did not yet exist; the lower bound is the real cross-check and the upper bound
+only rejects a clock that is implausible on its face.
+
 ## What is in the log today
 
 **Two entries, neither of them production.**
