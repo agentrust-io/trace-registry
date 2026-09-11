@@ -16,6 +16,8 @@ from verify_witness_receipt import load_json, verify
 PACKET = ROOT / 'docs/evidence/witness-2026-09-07'
 REGISTRY_KEY = 'bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90'
 WITNESS_KEY = '39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5'
+# checkpoint-1.json's own timestamp, 2026-09-01T21:39:37Z, as epoch seconds.
+CHECKPOINT_EPOCH = 1788298777
 
 
 class WitnessReceiptTests(unittest.TestCase):
@@ -188,6 +190,36 @@ class SignedReceiptMetadataTests(unittest.TestCase):
             with self.subTest(claims=claims):
                 result = self.mint({1: -8, 395: 1, 15: claims})
                 self.assertFalse(result['verified'], result)
+
+    def test_registered_cwt_claim_beside_iat_is_refused_as_unreviewed(self):
+        # iss is the claim the witness expects to add next. Refusing it is the
+        # agreed profile, so the message has to say so rather than read as a
+        # malformed-receipt error, which is what would send the debugging to
+        # the wrong side of the wire.
+        result = self.mint({1: -8, 395: 1, 15: {6: 1788914655, 1: 'witness.example'}})
+        self.assertFalse(result['verified'], result)
+        self.assertIn('unreviewed CWT claims', result['error'])
+        self.assertIn('LIMITATIONS.md', result['error'])
+
+    def test_iat_before_the_checkpoint_is_refused(self):
+        # A witness cannot have registered a checkpoint that did not yet exist.
+        result = self.mint({1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH - 1}})
+        self.assertFalse(result['verified'], result)
+        self.assertIn('precedes the checkpoint', result['error'])
+        result = self.mint({1: -8, 395: 1, 15: {6: 1}})
+        self.assertFalse(result['verified'], result)
+
+    def test_implausibly_late_iat_is_refused(self):
+        result = self.mint({1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH + 31 * 86400}})
+        self.assertFalse(result['verified'], result)
+        self.assertIn('implausibly long after', result['error'])
+
+    def test_iat_on_the_checkpoint_second_is_accepted(self):
+        # The bound is inclusive at both ends, so a witness registering in the
+        # same second as the checkpoint is not rejected off by one.
+        result = self.mint({1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH}})
+        self.assertTrue(result['verified'], result)
+        self.assertTrue(result['limits']['witness_time_established'])
 
     def test_neither_field_present_is_the_pre_fix_shape(self):
         result = self.mint({1: -8, 395: 1})

@@ -43,9 +43,26 @@ CWT_CLAIMS = 15
 CWT_IAT = 6
 PRIVATE_GRADE = -65537
 ALLOWED_PROTECTED = {1, 395, CWT_CLAIMS, PRIVATE_GRADE}
+# -65537 is provisional and sits in the private-use range by bilateral
+# agreement with the witness operator, not by registration. A third
+# implementer must not read it as standard: if a registered label is ever
+# assigned for a grade, this value moves and the change is coordinated.
+#
+# RFC 9597's CWT claims map is general, so the claims this adapter accepts
+# are a profile rather than a property of the format. Refusing an unreviewed
+# claim is the rule the protected header already follows one layer out, and
+# it means a witness adding iss, sub or any other registered claim is a
+# coordinated change rather than an outage. LIMITATIONS.md states the set so
+# both sides can cite it.
+ACCEPTED_CWT_CLAIMS = {CWT_IAT}
+# A witness cannot register a checkpoint before that checkpoint existed, so
+# the checkpoint's own timestamp is a real lower bound on a signed iat rather
+# than a heuristic. The upper bound is only a sanity check against a clock
+# that is implausible on its face; the lower bound is the load-bearing one.
+MAX_REGISTRATION_DELAY_SECONDS = 30 * 86400
 
 
-def read_protected(protected, decode):
+def read_protected(protected, decode, *, checkpoint_epoch):
     """Return (iat, grade) from the protected header, refusing anything else."""
     if not isinstance(protected, (bytes, bytearray)) or not protected:
         raise ValueError('receipt protected header must be a non-empty bstr')
@@ -60,11 +77,21 @@ def read_protected(protected, decode):
     iat = None
     if CWT_CLAIMS in headers:
         claims = headers[CWT_CLAIMS]
-        if not isinstance(claims, dict) or set(claims) != {CWT_IAT}:
-            raise ValueError('CWT claims map must carry iat and nothing else')
+        if not isinstance(claims, dict):
+            raise ValueError('CWT claims header must decode to a map')
+        if CWT_IAT not in claims:
+            raise ValueError('CWT claims map must carry iat')
+        unreviewed = set(claims) - ACCEPTED_CWT_CLAIMS
+        if unreviewed:
+            raise ValueError('unreviewed CWT claims: ' + ', '.join(map(str, sorted(unreviewed, key=str)))
+                             + '; the accepted set is exactly {iat} by agreement, see LIMITATIONS.md')
         iat = claims[CWT_IAT]
         if type(iat) is not int or iat <= 0:
             raise ValueError('CWT iat must be a positive integer')
+        if iat < checkpoint_epoch:
+            raise ValueError('CWT iat precedes the checkpoint it registers')
+        if iat > checkpoint_epoch + MAX_REGISTRATION_DELAY_SECONDS:
+            raise ValueError('CWT iat is implausibly long after the checkpoint it registers')
     grade = None
     if PRIVATE_GRADE in headers:
         grade = headers[PRIVATE_GRADE]
@@ -103,8 +130,12 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
                 continue
             if not isinstance(value, str) or len(value) != 64 or any(c not in '0123456789abcdef' for c in value):
                 raise ValueError('invalid lowercase hex ' + key)
-        if not isinstance(body['timestamp'], str) or datetime.fromisoformat(body['timestamp'].replace('Z', '+00:00')).tzinfo is None:
+        if not isinstance(body['timestamp'], str):
             raise ValueError('checkpoint timestamp must have a timezone')
+        checkpoint_time = datetime.fromisoformat(body['timestamp'].replace('Z', '+00:00'))
+        if checkpoint_time.tzinfo is None:
+            raise ValueError('checkpoint timestamp must have a timezone')
+        checkpoint_epoch = int(checkpoint_time.timestamp())
         checks['checkpoint_structure'] = True
         if body['log_id'] != expected_log_id or body['key_id'] != registry_key:
             raise ValueError('checkpoint does not match supplied registry identity policy')
@@ -129,7 +160,7 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
         protected, unprotected, payload, signature = envelope
         if payload is not None:
             raise ValueError('unsupported receipt protected headers or attached payload')
-        signed_iat, signed_grade = read_protected(protected, cbor2.loads)
+        signed_iat, signed_grade = read_protected(protected, cbor2.loads, checkpoint_epoch=checkpoint_epoch)
         if set(unprotected) != {396} or set(unprotected[396]) != {-1} or len(unprotected[396][-1]) != 1:
             raise ValueError('expected exactly one inclusion proof')
         checks['receipt_profile'] = True
