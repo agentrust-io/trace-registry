@@ -52,7 +52,10 @@ original checkpoint, returned receipt, separately fetched copies, key provenance
 It proves inclusion of that checkpoint signing-body digest under the pinned witness key.
 It does not certify continuity. Whether a receipt carries a witness time or a signed grade is
 a property of that receipt, so the verifier reports `witness_time_established` and
-`grade_cryptographically_bound` rather than asserting either. Both are false for this capture.
+`grade_cryptographically_bound` rather than asserting either. Both are false for this capture
+and stay false for it. Its protected header carries algorithm and tree profile only, and the
+witness signature covers that header, so a receipt carrying either field is a new receipt rather
+than this one re-read.
 The pipeline does not yet submit future checkpoints automatically. Parallel independent
 witnesses remain supported as a deployment choice; only one operator is demonstrated here.
 

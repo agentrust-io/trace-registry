@@ -52,7 +52,13 @@ record. Do not present either as a cryptographically authenticated witness time.
 properties of a receipt rather than of the profile. A witness may sign a registration time as
 a CWT `iat` and its grade under a private-use label; where it does, `verify_witness_receipt`
 reports `witness_time_established` and `grade_cryptographically_bound`, and where it does not,
-both stay false. Read those two fields rather than this paragraph. The receipt binds the
+both stay false. Read those two fields rather than this paragraph. They are read from the
+receipt's protected header, which the witness signature covers, so a witness that later deploys
+support for them changes what a subsequent receipt carries and cannot change what an issued one
+carries. The September 7 receipt's protected header is algorithm and tree profile only
+(`{1: -8, 395: 1}`, receipt SHA-256
+`4e075e8494da20ab72a9b8077432663317c4dad58aa8f8fdcd452c166c20bdd7`), and all three captured
+copies are those same bytes. The receipt binds the
 checkpoint's nine-field signing body by digest; its signature and optional consistency proof
 are not included in that witnessed digest. Registry signature verification is a separate check.
 

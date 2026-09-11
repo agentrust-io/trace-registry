@@ -54,11 +54,17 @@ registers the raw 32-byte digest. Its `legacy` entry hash is SHA-256 of those
 - Checkpoint signing digest: `41138372adb1921186ca6a0dbc3433a0ea2f6475cb863205603ab1231968f99a`.
 - Receipt entry hash: `dee1a92dad155b56f99cf2284e166e3b6b935528e6d27dec8a4f67bbed6dfab6`.
 - Verified witness root: `f8ee69f33629abc413a9b5530f9166230c8efd3b29f052216f22fb2412e1ef91`.
+- Receipt SHA-256: `4e075e8494da20ab72a9b8077432663317c4dad58aa8f8fdcd452c166c20bdd7`, the same
+  bytes in all three captured responses.
 
 The COSE signature authenticates that root. Its protected headers contain only
-algorithm and tree profile. There is no signed witness timestamp. The checkpoint
-timestamp is the registry signer's assertion; collection time is the observer's
-local record. Neither is an authenticated witness observation time.
+algorithm and tree profile, decoding to `{1: -8, 395: 1}`. There is no signed
+witness timestamp. The signature covers that header, so `witness_time_established`
+and `grade_cryptographically_bound` are false for this receipt permanently rather
+than pending a witness upgrade: a receipt carrying a CWT `iat` or a signed grade is
+a separately signed receipt, and this packet's bytes are unchanged by one. The
+checkpoint timestamp is the registry signer's assertion; collection time is the
+observer's local record. Neither is an authenticated witness observation time.
 
 `grade: countersigned-observed` is reported by the HTTPS response, outside the
 signed receipt. The verifier exposes it as `reported_grade` and always reports
