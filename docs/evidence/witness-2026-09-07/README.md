@@ -38,10 +38,15 @@ for this demonstration, not a public CA certification or independently establish
 organizational identity. `witness-did.json` records that discovery; changing it
 does not change the verifier's required key argument.
 
-The receipt is verified by the separately published `scitt-cose==0.2.2` library,
-not by importing the witness's service or asking its endpoint for a verdict.
-That implementation documents its receipt encoding as tracking a COSE Merkle
-proof draft. This packet makes no final-RFC conformance claim.
+The receipt is verified by the separately published `scitt-cose` library, not by
+importing the witness's service or asking its endpoint for a verdict.
+`requirements/witness.txt` pins `scitt-cose==0.3.0`. The packet was captured and
+first verified under `0.2.2`; 0.3.0 reproduces the same checkpoint signing
+digest, entry hash, root, coordinates and four false limits from the same bytes,
+and it reports `iat` and unrecognised protected labels, so the neutral library
+now says this receipt carries no signed witness time rather than not looking for
+one. That implementation documents its receipt encoding as tracking a COSE
+Merkle proof draft. This packet makes no final-RFC conformance claim.
 
 ## Exact binding and limits
 

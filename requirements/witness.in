@@ -1,0 +1,14 @@
+# Optional offline witness verifier, layered over the runtime pins rather than
+# restating them. Compile with:
+#   uv pip compile requirements/witness.in --generate-hashes --universal \
+#     --python-version 3.12 --no-deps -o requirements/witness.txt
+#   sed -i '2a -r runtime.txt' requirements/witness.txt
+# Two steps because uv resolves a -r line rather than emitting one, and the
+# layering is deliberate: cbor2 and scitt-cose depend on cryptography, which
+# runtime.txt already hash-pins. A second hashed copy here would have to be
+# bumped in two places to stay installable. --no-deps holds the layer to the
+# two packages it adds; the -r line is what makes
+# `pip install --require-hashes -r requirements/witness.txt` a single command
+# that can run the verifier, as docs/evidence/*/README.md instructs.
+cbor2==6.1.4
+scitt-cose==0.3.0
