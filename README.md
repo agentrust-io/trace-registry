@@ -56,6 +56,11 @@ a property of that receipt, so the verifier reports `witness_time_established` a
 and stay false for it. Its protected header carries algorithm and tree profile only, and the
 witness signature covers that header, so a receipt carrying either field is a new receipt rather
 than this one re-read.
+A further capture runs through `tools/capture_witness_receipt.py`, which submits the
+checkpoint, reads the receipt back by log id and by digest, and writes the response
+bodies, a capture manifest, the offline verification and `SHA256SUMS` into one
+directory. Every status, timestamp and hash it records comes from an observed
+response, and a failed request is recorded as it failed.
 The pipeline does not yet submit future checkpoints automatically. Parallel independent
 witnesses remain supported as a deployment choice; only one operator is demonstrated here.
 
