@@ -99,6 +99,17 @@ def read_protected(protected, decode, *, checkpoint_epoch):
             raise ValueError('private-use grade label must be a non-empty text string')
     return iat, grade
 
+def signing_body(checkpoint):
+    """Return the nine-field signing body the registry signature covers."""
+    return {key: checkpoint[key] for key in FIELDS}
+
+
+def signing_body_digest(body):
+    """SHA-256 over sorted-key compact JSON of the signing body."""
+    encoded = json.dumps(body, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode()).digest()
+
+
 def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
     import cbor2
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -116,7 +127,7 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
     try:
         if not isinstance(checkpoint, dict) or not isinstance(response, dict):
             raise ValueError('checkpoint and response must be objects')
-        body = {key: checkpoint[key] for key in FIELDS}
+        body = signing_body(checkpoint)
         if body['v'] != 1 or type(body['v']) is not int or body['kind'] != 'mmr_checkpoint':
             raise ValueError('unsupported checkpoint version/kind')
         for key in ('mmr_size', 'prev_size'):
@@ -140,7 +151,7 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
         if body['log_id'] != expected_log_id or body['key_id'] != registry_key:
             raise ValueError('checkpoint does not match supplied registry identity policy')
         checks['registry_identity'] = True
-        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).digest()
+        digest = signing_body_digest(body)
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(registry_key)).verify(
             bytes.fromhex(checkpoint['signature']), digest.hex().encode('ascii'))
         checks['checkpoint_signature'] = True
