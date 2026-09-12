@@ -144,10 +144,61 @@ def write_sums(out):
     (out / SUMS_FILENAME).write_bytes(('\n'.join(lines) + '\n').encode())
 
 
-def capture(*, checkpoint_path, out, witness_base, expected_log_id, registry_key,
-            witness_key, did_url=None, source_commit=None, source_path=None, timeout=30):
-    checkpoint_bytes = checkpoint_path.read_bytes()
-    checkpoint = vwr.load_json(checkpoint_path)
+def checkpoint_from_registry_entry(path, batch_id=None):
+    """Return (checkpoint_bytes, batch_id) for the entry's mmr_checkpoint.
+
+    A checkpoint is published nested inside a registry entry line, so capturing
+    one used to mean extracting it into a file by hand first. That is the step
+    where a capture goes wrong quietly: send the whole entry and the witness
+    registers a digest over the wrong object, and nothing downstream says so
+    because the digest it returns is consistent with what it was given.
+
+    Re-serializing is safe. The witness registers the signing-body digest,
+    which is computed from the nine signed fields rather than from these bytes,
+    so whitespace here cannot change the entry hash or dodge the witness's
+    deduplication. Sorted-key compact JSON is used so the same checkpoint
+    always produces the same file.
+    """
+    entries = []
+    for lineno, line in enumerate(Path(path).read_text(encoding='utf-8').splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit('error: ' + str(path) + ':' + str(lineno) + ': invalid JSON: ' + str(exc))
+        if not isinstance(entry, dict):
+            raise SystemExit('error: ' + str(path) + ':' + str(lineno) + ': entry is not a JSON object')
+        if batch_id is not None and entry.get('batch_id') != batch_id:
+            continue
+        if isinstance(entry.get('mmr_checkpoint'), dict):
+            entries.append(entry)
+
+    if not entries:
+        raise SystemExit('error: no entry with an mmr_checkpoint found in ' + str(path)
+                         + (' for batch_id ' + repr(batch_id) if batch_id else ''))
+    if len(entries) > 1:
+        raise SystemExit('error: ' + str(path) + ' carries ' + str(len(entries))
+                         + ' checkpointed entries; select one with --batch-id')
+
+    entry = entries[0]
+    checkpoint = entry['mmr_checkpoint']
+    missing = [field for field in vwr.FIELDS if field not in checkpoint]
+    if missing:
+        raise SystemExit('error: checkpoint is missing signed field(s): ' + ', '.join(missing))
+    encoded = json.dumps(checkpoint, sort_keys=True, separators=(',', ':'),
+                         ensure_ascii=True).encode('ascii')
+    return encoded, entry.get('batch_id')
+
+
+def capture(*, out, witness_base, expected_log_id, registry_key, witness_key,
+            checkpoint_path=None, checkpoint_bytes=None, did_url=None,
+            source_commit=None, source_path=None, timeout=30):
+    if (checkpoint_path is None) == (checkpoint_bytes is None):
+        raise SystemExit('error: pass exactly one of checkpoint_path or checkpoint_bytes')
+    if checkpoint_bytes is None:
+        checkpoint_bytes = checkpoint_path.read_bytes()
+    checkpoint = json.loads(checkpoint_bytes)
     digest = vwr.signing_body_digest(vwr.signing_body(checkpoint)).hex()
 
     base = witness_base.rstrip('/')
@@ -229,7 +280,14 @@ def capture(*, checkpoint_path, out, witness_base, expected_log_id, registry_key
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--checkpoint', required=True, help='checkpoint JSON file, sent verbatim')
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--checkpoint', help='checkpoint JSON file, sent verbatim')
+    source.add_argument('--registry-entry',
+                        help='registry .ndjson file; the entry\'s mmr_checkpoint is '
+                             'extracted and sent, so capturing a published '
+                             'checkpoint takes no hand-editing')
+    parser.add_argument('--batch-id',
+                        help='select one entry from a multi-line registry file')
     parser.add_argument('--out', required=True, help='evidence directory to write')
     parser.add_argument('--witness-base', required=True, help='https base URL of the witness')
     parser.add_argument('--expected-log-id', required=True)
@@ -242,12 +300,27 @@ def main(argv=None):
     parser.add_argument('--source-path', help='registry path the checkpoint came from')
     parser.add_argument('--timeout', type=int, default=30)
     args = parser.parse_args(argv)
+
+    checkpoint_path = checkpoint_bytes = None
+    source_path = args.source_path
+    if args.registry_entry:
+        checkpoint_bytes, _ = checkpoint_from_registry_entry(
+            Path(args.registry_entry), args.batch_id)
+        # The entry file is where the checkpoint actually came from, so record
+        # it unless the caller named something else. A capture manifest whose
+        # provenance field is empty is a manifest a reader cannot re-walk.
+        if source_path is None:
+            source_path = args.registry_entry
+    else:
+        checkpoint_path = Path(args.checkpoint)
+
     try:
-        return capture(checkpoint_path=Path(args.checkpoint), out=Path(args.out),
+        return capture(checkpoint_path=checkpoint_path, checkpoint_bytes=checkpoint_bytes,
+                       out=Path(args.out),
                        witness_base=args.witness_base, expected_log_id=args.expected_log_id,
                        registry_key=args.registry_key, witness_key=args.witness_key,
                        did_url=args.did_url, source_commit=args.source_commit,
-                       source_path=args.source_path, timeout=args.timeout)
+                       source_path=source_path, timeout=args.timeout)
     except (OSError, ValueError) as exc:
         print(type(exc).__name__ + ': ' + str(exc), file=sys.stderr)
         return 2
