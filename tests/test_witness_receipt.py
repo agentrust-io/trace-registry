@@ -227,3 +227,76 @@ class SignedReceiptMetadataTests(unittest.TestCase):
         self.assertIsNone(result['signed_iat'])
         self.assertIsNone(result['signed_grade'])
         self.assertFalse(any(result['limits'].values()))
+
+
+class PostDeployWitnessHeaderTests(unittest.TestCase):
+    """The header shape the witness operator reported after their deploy.
+
+    Reported on September 12, 2026 from a real submission through their live
+    service: {1: -8, 395: 1, 15: {6: 1789172972}, -65537: 'mmr-verified'}.
+    These receipts are minted here, as in the class above, so nothing asserts
+    that their service produced anything. What is pinned is what our verifier
+    does when a receipt of that shape arrives, before one ever does.
+    """
+
+    setUp = WitnessReceiptTests.setUp
+    check = WitnessReceiptTests.check
+    mint = SignedReceiptMetadataTests.mint
+
+    REPORTED_IAT = 1789172972
+    REPORTED_GRADE = 'mmr-verified'
+
+    def _header(self, grade=None, iat=None):
+        return {1: -8, 395: 1,
+                15: {6: self.REPORTED_IAT if iat is None else iat},
+                -65537: self.REPORTED_GRADE if grade is None else grade}
+
+    def test_both_fields_bind_when_the_response_grade_agrees(self):
+        result = self.mint(self._header(), grade=self.REPORTED_GRADE)
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['signed_iat'], self.REPORTED_IAT)
+        self.assertEqual(result['signed_grade'], self.REPORTED_GRADE)
+        self.assertTrue(result['limits']['witness_time_established'])
+        self.assertTrue(result['limits']['grade_cryptographically_bound'])
+
+    def test_signed_grade_alone_does_not_bind_it(self):
+        """The half of the upgrade that is easy to miss.
+
+        A witness that starts signing a grade while its response body still
+        reports the previous one has moved one of the two values this field
+        compares. A signed value disagreeing with the untrusted one binds
+        nothing, so the field stays false and the receipt still verifies.
+        """
+        result = self.mint(self._header(), grade='countersigned-observed')
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['signed_grade'], self.REPORTED_GRADE)
+        self.assertEqual(result['reported_grade'], 'countersigned-observed')
+        self.assertTrue(result['limits']['witness_time_established'])
+        self.assertFalse(result['limits']['grade_cryptographically_bound'])
+
+    def test_the_grade_string_is_opaque_and_not_fixed_by_agreement(self):
+        """countersigned-observed and mmr-verified are both just strings here.
+
+        The bilateral agreement fixes the label (-65537), not the value. A
+        verifier that hardcoded either term would have broken on this deploy.
+        """
+        for value in ('countersigned-observed', 'mmr-verified', 'anything-else'):
+            with self.subTest(grade=value):
+                result = self.mint(self._header(grade=value), grade=value)
+                self.assertTrue(result['verified'], result)
+                self.assertEqual(result['signed_grade'], value)
+                self.assertTrue(result['limits']['grade_cryptographically_bound'])
+
+    def test_the_reported_iat_falls_inside_the_accepted_window(self):
+        """The bound is relative to the checkpoint, not to wall clock.
+
+        Checkpoint 1 is timestamped 2026-09-01T21:39:37Z and the reported iat
+        is about ten days later, so a receipt of this shape would be accepted
+        for it on the clock alone. It is the deduplication described in
+        LIMITATIONS.md, not this bound, that keeps checkpoint 1 from ever
+        carrying one.
+        """
+        from trace_verify._witness import MAX_REGISTRATION_DELAY_SECONDS
+        self.assertGreaterEqual(self.REPORTED_IAT, CHECKPOINT_EPOCH)
+        self.assertLessEqual(self.REPORTED_IAT,
+                             CHECKPOINT_EPOCH + MAX_REGISTRATION_DELAY_SECONDS)

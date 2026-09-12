@@ -55,7 +55,27 @@ reports `witness_time_established` and `grade_cryptographically_bound`, and wher
 both stay false. Read those two fields rather than this paragraph. They are read from the
 receipt's protected header, which the witness signature covers, so a witness that later deploys
 support for them changes what a subsequent receipt carries and cannot change what an issued one
-carries. The September 7 receipt's protected header is algorithm and tree profile only
+carries.
+
+A witness upgrade does not re-stamp an existing checkpoint, and there is no path by which it
+could. The witness registers a checkpoint by its content-addressed entry hash and deduplicates
+on it, so re-submitting an already-witnessed checkpoint returns the original receipt, header and
+all, rather than issuing a second one under the new code. That is the correct behaviour: a
+witness that reissued a different receipt for a checkpoint it had already witnessed would be a
+witness whose receipts are not final. The consequence for this registry is that a receipt
+carrying `iat` or a signed grade requires a checkpoint the witness has not seen, which means the
+log has to advance first. Checkpoint 1 will read `witness_time_established: false` and
+`grade_cryptographically_bound: false` for as long as it exists, and no deployment on either
+side changes that. Confirmed with the witness operator on September 12, 2026, after their
+deploy, and recorded here because both sides had assumed otherwise in their own runbooks.
+
+`grade_cryptographically_bound` compares two values and a witness has to move both. The signed
+grade counts only when it equals the grade the HTTPS response reports, so a witness that starts
+signing a grade while its response body still reports the previous one leaves the field false,
+correctly: a signed value that disagrees with the untrusted one binds nothing. The value itself
+is opaque to the verifier and is not fixed by this agreement. The September 7 response reported
+`countersigned-observed`; the operator's post-deploy receipts sign `mmr-verified`. Neither is a
+registered term, and the verifier reads the label as a string rather than interpreting it. The September 7 receipt's protected header is algorithm and tree profile only
 (`{1: -8, 395: 1}`, receipt SHA-256
 `4e075e8494da20ab72a9b8077432663317c4dad58aa8f8fdcd452c166c20bdd7`), and all three captured
 copies are those same bytes. The receipt binds the
