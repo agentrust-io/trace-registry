@@ -438,6 +438,155 @@ class TestCLIParser(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
 
+class TestProducerKeyOverTheWire(unittest.TestCase):
+    """Verifying without a clone.
+
+    --entry-url fetched the entry and stopped there. The producer key still had
+    to be on disk, so a reader without a clone got
+    "no registered key for producer ..." and, at best, fell back to
+    --no-verify-signature: inclusion without authorship, which is the weaker
+    half of the answer. The key now comes from the same allowlisted host, and
+    the fetch is never silent.
+    """
+
+    ENTRY_URL = (
+        "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/"
+        "registry/2026/06/12.ndjson"
+    )
+
+    def test_producers_base_is_derived_from_an_entry_url(self):
+        from trace_verify.__main__ import _producers_base_from_entry_url
+        self.assertEqual(
+            _producers_base_from_entry_url(self.ENTRY_URL),
+            "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/producers",
+        )
+
+    def test_a_url_that_is_not_a_registry_entry_derives_nothing(self):
+        from trace_verify.__main__ import _producers_base_from_entry_url
+        self.assertIsNone(
+            _producers_base_from_entry_url("https://raw.githubusercontent.com/a/b/c.json")
+        )
+
+    def test_derived_url_is_still_checked_against_the_allowlist(self):
+        """Derivation must not become a way around the SSRF guard.
+
+        The guard runs on the derived URL, not only on the one the caller
+        typed, so an entry URL on a disallowed host cannot smuggle a fetch.
+        """
+        from trace_verify.__main__ import _check_url_allowed, _producers_base_from_entry_url
+        derived = _producers_base_from_entry_url(
+            "https://evil.example.com/registry/2026/06/12.ndjson"
+        )
+        self.assertIsNotNone(derived)
+        self.assertIsNotNone(_check_url_allowed(derived + "/x-1.0.0.json"))
+
+    def test_fetched_key_lands_under_the_name_the_loader_expects(self):
+        from trace_verify.__main__ import _fetch_producer_key
+        body = (REPO_ROOT / "producers" / "cmcp-gateway-0.1.0.json").read_text(
+            encoding="utf-8"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("trace_verify.__main__._fetch_url", return_value=body) as fetch:
+                url = _fetch_producer_key(
+                    "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/producers",
+                    "cmcp-gateway/0.1.0",
+                    Path(tmp),
+                )
+            self.assertTrue(url.endswith("/producers/cmcp-gateway-0.1.0.json"))
+            fetch.assert_called_once()
+            # The name matters: the existing loader does the parsing and the
+            # producer_id validation that keeps a crafted id inside the dir.
+            from trace_verify._signature import load_producer_key
+            key = load_producer_key("cmcp-gateway/0.1.0", Path(tmp))
+            self.assertIsNotNone(key)
+            self.assertEqual(key["producer_id"], "cmcp-gateway/0.1.0")
+
+    def test_a_crafted_producer_id_cannot_escape_the_directory(self):
+        from trace_verify.__main__ import _fetch_producer_key
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("trace_verify.__main__._fetch_url", return_value="{}"):
+                with self.assertRaises(SystemExit):
+                    _fetch_producer_key(
+                        "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/producers",
+                        "../../etc/passwd",
+                        Path(tmp),
+                    )
+
+    def test_end_to_end_with_no_local_producers_directory(self):
+        """The whole point: entry and key both off the network, exit 0."""
+        entry = (REPO_ROOT / "registry" / "2026" / "06" / "12.ndjson").read_text(
+            encoding="utf-8"
+        )
+        key = (REPO_ROOT / "producers" / "cmcp-gateway-0.1.0.json").read_text(
+            encoding="utf-8"
+        )
+
+        def fake_fetch(url: str) -> str:
+            return key if url.endswith(".json") and "/producers/" in url else entry
+
+        buf = io.StringIO()
+        with patch("trace_verify.__main__._fetch_url", side_effect=fake_fetch):
+            with redirect_stdout(buf):
+                code = main([
+                    "--claim", str(REPO_ROOT / "samples" / "example-trust-record.json"),
+                    "--proof", str(REPO_ROOT / "samples" / "inclusion-proof.json"),
+                    "--entry-url", self.ENTRY_URL,
+                ])
+        out = buf.getvalue()
+        self.assertEqual(code, 0, out)
+        self.assertIn("signature valid", out)
+        # A key that arrived over the network is a different trust statement
+        # from one already on disk, so the output has to say so.
+        self.assertIn("producer key fetched from", out)
+
+    def test_json_output_names_the_key_source(self):
+        entry = (REPO_ROOT / "registry" / "2026" / "06" / "12.ndjson").read_text(
+            encoding="utf-8"
+        )
+        key = (REPO_ROOT / "producers" / "cmcp-gateway-0.1.0.json").read_text(
+            encoding="utf-8"
+        )
+
+        def fake_fetch(url: str) -> str:
+            return key if "/producers/" in url else entry
+
+        buf = io.StringIO()
+        with patch("trace_verify.__main__._fetch_url", side_effect=fake_fetch):
+            with redirect_stdout(buf):
+                code = main([
+                    "--claim", str(REPO_ROOT / "samples" / "example-trust-record.json"),
+                    "--proof", str(REPO_ROOT / "samples" / "inclusion-proof.json"),
+                    "--entry-url", self.ENTRY_URL, "--json",
+                ])
+        result = json.loads(buf.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(result["signature_valid"])
+        self.assertTrue(result["producer_key_source"].endswith("cmcp-gateway-0.1.0.json"))
+
+    def test_local_entry_file_does_not_trigger_any_fetch(self):
+        """No --entry-url means no derivation, so the local path is unchanged."""
+        buf = io.StringIO()
+        with patch("trace_verify.__main__._fetch_url") as fetch:
+            with redirect_stdout(buf):
+                code = main([
+                    "--claim", str(REPO_ROOT / "samples" / "example-trust-record.json"),
+                    "--proof", str(REPO_ROOT / "samples" / "inclusion-proof.json"),
+                    "--entry", str(REPO_ROOT / "registry" / "2026" / "06" / "12.ndjson"),
+                    "--producers-dir", str(REPO_ROOT / "producers"),
+                ])
+        self.assertEqual(code, 0, buf.getvalue())
+        fetch.assert_not_called()
+        self.assertNotIn("fetched from", buf.getvalue())
+
+    def test_producers_dir_and_producers_url_are_mutually_exclusive(self):
+        parser = build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args([
+                "--claim", "c.json", "--proof", "p.json", "--entry", "e.ndjson",
+                "--producers-dir", "producers", "--producers-url", "https://x/y",
+            ])
+
+
 class TestProjectURLs(unittest.TestCase):
     """The URLs PyPI shows, checked as far as they can be checked offline.
 
