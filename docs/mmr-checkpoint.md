@@ -134,8 +134,14 @@ exact `batch_id`/`mmr_size` where it first becomes provable.
 `pip install trace-verify` ships `trace_verify._mmr` and
 `trace_verify._checkpoint` -- the same MMR/checkpoint algorithm this
 registry's aggregator uses to produce checkpoints, reachable by any third
-party independent of this repository. `tools/verify_checkpoint_chain.py` is
-a CLI wrapper over that package:
+party independent of this repository. Since 0.4.0 it also ships the command:
+
+```
+trace-verify chain registry/2026/06/12.ndjson
+```
+
+`tools/verify_checkpoint_chain.py` is the same code reached from a clone, and
+takes the same arguments:
 
 ```
 python tools/verify_checkpoint_chain.py registry/2026/06/12.ndjson

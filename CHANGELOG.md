@@ -12,6 +12,64 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **One install answers all three questions (`trace-verify` 0.4.0 CLI).**
+  Inclusion had a command. Chain verification was a Python API with no command.
+  Witness-receipt verification was not in the package at all. The second and
+  third were reachable only by cloning this repository, which is the wrong ask
+  for a public accountability layer.
+
+  ```
+  trace-verify --claim C.json --proof P.json --entry E.ndjson   (unchanged)
+  trace-verify chain E.ndjson [MORE...]
+  trace-verify receipt --checkpoint CP.json --response POST.json \
+      --registry-key HEX --witness-key HEX --expected-log-id ID
+  ```
+
+  The inclusion check keeps its bare-flag form, so every invocation written
+  against 0.3.x runs unchanged; only the two literal subcommand tokens route.
+
+  The substantive half is `verify_chain_against_entries`, moved out of
+  `tools/verify_checkpoint_chain.py` into `trace_verify._checkpoint` and
+  exported. It rebuilds the MMR from the raw entries and compares it to what
+  each checkpoint claims, which is what catches a quiet edit to an
+  already-anchored entry: such an edit leaves every checkpoint record's own math
+  self-consistent, so the chain check still passes and only the recompute fails.
+  That check existed here and nowhere a pip user could reach it.
+
+  The witness verifier moves from `tools/verify_witness_receipt.py` into
+  `trace_verify._witness`. cbor2 and scitt-cose stay imported inside `verify()`,
+  so the inclusion-only reader still imports the package without a CBOR stack,
+  and they arrive through a new extra: `pip install "trace-verify[witness]"`.
+  Both `tools/` scripts stay, re-exporting rather than reimplementing.
+
+- **The published CLI reported the wrong version, and now cannot.**
+  `trace-verify` 0.3.0 and 0.3.1 both answered `--version` with `0.1.0`:
+  `__version__` had not moved since the package was first cut in #19, and
+  nothing compared it to anything. A reader reporting a bug was giving us a
+  version string that named neither the release they had nor the code in it.
+  A test now pins `__version__` to the `pyproject.toml` version, and the publish
+  workflow refuses to build unless the release tag matches both.
+
+- **`scitt-cose` pinned to 0.3.0 and the witness lock made reproducible** (#74).
+  0.3.0 reports `iat` and unrecognised protected labels, so a third party
+  verifying with the neutral library alone sees that the September 7 receipt
+  carries no signed witness time, rather than not looking for one. It verifies
+  that packet identically: same signing digest, root, coordinates and the same
+  four false limits. `requirements/witness.in` was added because `witness.txt`
+  was the only lock in the repository whose hashes could only be moved by hand.
+
+- **Package URLs point back at this repository.** Homepage, Bug Tracker and
+  Changelog moved to trace-spec while trace-registry was private, because a link
+  into a private repo is a 404 to every reader of the package. It is public now.
+  The tutorial and anchor-format links stay at trace-spec, which is where the
+  normative text belongs. A test asserts that any URL naming a file in this tree
+  names one that exists.
+
+- **The README leads with `pip install` instead of `git clone`.** The three
+  questions are one command each, and `--entry-url` fetches a registry entry
+  over https from an allowlisted host, so answering the first needs no clone at
+  all.
+
 - **`trace-verify` 0.4.0: the CLL (Checkpointed Local Log) checkpoint chain
   -- cryptographic consistency between anchoring runs, not just git commit
   history.** Every anchored registry entry now also folds as one leaf into a

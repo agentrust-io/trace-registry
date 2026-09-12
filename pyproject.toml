@@ -34,20 +34,29 @@ witness = ["cbor2>=5.5", "scitt-cose>=0.3.0"]
 [project.scripts]
 trace-verify = "trace_verify.__main__:main"
 
-# trace-registry is a private repository, so EVERY link into it returns 404 to a
-# reader of this package. Only Bug Tracker was moved when that was first noticed;
-# Homepage, Documentation and Changelog were left pointing at the private repo and
-# 404d for a week. All four now point at trace-spec, which is public, and which is
-# where the first external report of a trace-verify defect was filed after the
-# reader found nowhere else to put it (trace-spec#138).
+# These pointed at trace-spec because trace-registry was private and every link
+# into it returned 404 to a reader of this package, for a week in the case of
+# Homepage, Documentation and Changelog. The condition that comment set has been
+# met: trace-registry is public. Homepage, Bug Tracker and Changelog come back
+# here, because this is where the code, the issues and the changelog actually
+# live and a reader filing a trace-verify defect should not have to find that
+# out by guessing (they once filed it at trace-spec#138 instead).
 #
-# Do not point any of these back at trace-registry until that repository is public.
+# The tutorial and the anchor format stay at trace-spec. Those are spec
+# documents that happen to describe this implementation, not documents about
+# this package, and moving them here would put the normative text behind an
+# implementation's URL.
+#
+# tests/test_trace_verify_pkg.py asserts that any URL naming a file inside this
+# repository names one that exists, so a rename fails in CI rather than on PyPI.
+# The trace-spec links cannot be checked from here; they are the reason this
+# block is commented at all.
 [project.urls]
-Homepage = "https://github.com/agentrust-io/trace-spec"
+Homepage = "https://github.com/agentrust-io/trace-registry"
 Documentation = "https://github.com/agentrust-io/trace-spec/blob/main/docs/tutorials/anchoring-to-the-registry.md"
 "Anchor format" = "https://github.com/agentrust-io/trace-spec/blob/main/spec/registry-anchor-v1.md"
-"Bug Tracker" = "https://github.com/agentrust-io/trace-spec/issues"
-Changelog = "https://github.com/agentrust-io/trace-spec/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/agentrust-io/trace-registry/issues"
+Changelog = "https://github.com/agentrust-io/trace-registry/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trace_verify"]

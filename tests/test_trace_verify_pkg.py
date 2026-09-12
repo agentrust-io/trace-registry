@@ -438,6 +438,66 @@ class TestCLIParser(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
 
+class TestProjectURLs(unittest.TestCase):
+    """The URLs PyPI shows, checked as far as they can be checked offline.
+
+    These pointed at trace-spec for as long as this repository was private,
+    because a link into a private repo is a 404 to every reader of the package.
+    A reader who hit that filed a trace-verify defect at trace-spec#138 for want
+    of anywhere else to put it. Now that the repo is public they point back, and
+    the failure mode worth guarding is the quieter one: a link that names a file
+    which has since moved. PyPI renders it happily and nothing tells us.
+    """
+
+    def _urls(self) -> dict:
+        text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        block = text.split("[project.urls]", 1)[1].split("\n[", 1)[0]
+        urls = {}
+        for line in block.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            urls[key.strip().strip('"')] = value.strip().strip('"')
+        return urls
+
+    def test_urls_are_declared(self):
+        urls = self._urls()
+        self.assertIn("Homepage", urls)
+        self.assertIn("Bug Tracker", urls)
+        self.assertIn("Changelog", urls)
+
+    def test_links_into_this_repo_name_files_that_exist(self):
+        prefix = "https://github.com/agentrust-io/trace-registry/blob/main/"
+        checked = 0
+        for name, url in self._urls().items():
+            if not url.startswith(prefix):
+                continue
+            rel = url[len(prefix):]
+            self.assertTrue(
+                (REPO_ROOT / rel).exists(),
+                f"{name} points at {rel}, which does not exist in this tree",
+            )
+            checked += 1
+        self.assertGreater(checked, 0, "expected at least one link into this repo")
+
+    def test_no_url_points_at_a_private_repo_path(self):
+        """trace-spec links are allowed; they are public and normative.
+
+        Anything else outside these two repositories is more likely a typo than
+        a decision, so it fails here rather than on PyPI.
+        """
+        allowed = (
+            "https://github.com/agentrust-io/trace-registry",
+            "https://github.com/agentrust-io/trace-spec",
+        )
+        for name, url in self._urls().items():
+            self.assertTrue(
+                url.startswith(allowed),
+                f"{name} points outside the known public repositories: {url}",
+            )
+
+
 class TestSubcommandDispatch(unittest.TestCase):
     """The CLI grew subcommands without moving the inclusion check behind one.
 
