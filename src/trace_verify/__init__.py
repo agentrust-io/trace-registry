@@ -17,6 +17,7 @@ __all__ = [
     "verify_checkpoint_signature_offline",
     "verify_checkpoint_link",
     "verify_checkpoint_chain",
+    "verify_chain_against_entries",
 ]
 
 from trace_verify._verify import (
@@ -28,6 +29,7 @@ from trace_verify._verify import (
 )
 from trace_verify._checkpoint import (
     CheckpointRecord,
+    verify_chain_against_entries,
     verify_checkpoint_chain,
     verify_checkpoint_link,
     verify_checkpoint_signature_offline,

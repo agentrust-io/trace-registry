@@ -26,6 +26,10 @@ classifiers = [
 
 [project.optional-dependencies]
 signature = []
+# The witness verifier needs COSE. Base trace-verify deliberately does not:
+# inclusion and chain verification are the common case, and a reader who
+# only wants those should not be made to install a CBOR stack for them.
+witness = ["cbor2>=5.5", "scitt-cose>=0.3.0"]
 
 [project.scripts]
 trace-verify = "trace_verify.__main__:main"

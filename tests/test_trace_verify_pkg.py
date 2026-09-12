@@ -11,10 +11,12 @@ src/ is added to sys.path by setUp.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -434,6 +436,167 @@ class TestCLIParser(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             parser.parse_args(["--version"])
         self.assertEqual(ctx.exception.code, 0)
+
+
+class TestSubcommandDispatch(unittest.TestCase):
+    """The CLI grew subcommands without moving the inclusion check behind one.
+
+    Every published 0.3.x invocation is of the form `trace-verify --claim ...`,
+    so a bare flag list has to keep meaning inclusion. Only the two literal
+    tokens are routed; anything else falls through, which also means an
+    argument typo is reported by the parser the caller was actually using.
+    """
+
+    def test_bare_flags_still_reach_the_inclusion_parser(self):
+        with self.assertRaises(SystemExit) as ctx:
+            main(["--claim", "c.json"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_unknown_first_token_is_not_treated_as_a_subcommand(self):
+        # 'bogus' is not routed, so the inclusion parser reports the missing
+        # --proof rather than the dispatcher reporting an unknown command.
+        with self.assertRaises(SystemExit) as ctx:
+            main(["bogus", "--claim", "c.json"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_routed_tokens_are_exactly_chain_and_receipt(self):
+        from trace_verify.__main__ import _SUBCOMMANDS
+        self.assertEqual(sorted(_SUBCOMMANDS), ["chain", "receipt"])
+
+
+class TestChainSubcommand(unittest.TestCase):
+    """`trace-verify chain` over the real registry entries.
+
+    The from-scratch recompute these exercise used to live only in
+    tools/verify_checkpoint_chain.py, so it was reachable by cloning the
+    repository and not by installing the package. These run it through the
+    installed entry point.
+    """
+
+    def _run(self, argv):
+        from trace_verify.__main__ import _main_chain
+        return _main_chain(argv)
+
+    def test_real_registry_entries_verify(self):
+        entries = [
+            str(REPO_ROOT / "registry" / "2026" / "06" / "12.ndjson"),
+            str(REPO_ROOT / "registry" / "2026" / "09" / "01.ndjson"),
+        ]
+        self.assertEqual(self._run(entries), 0)
+
+    def test_json_output_reports_root_and_count(self):
+        entry = str(REPO_ROOT / "registry" / "2026" / "09" / "01.ndjson")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = self._run([entry, "--json"])
+        result = json.loads(buf.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["checkpoints"], 1)
+        self.assertEqual(result["errors"], [])
+        self.assertIn("root", result)
+
+    def test_quiet_edit_to_an_anchored_entry_is_caught(self):
+        """The check the chain-consistency check cannot make.
+
+        Only a field outside mmr_checkpoint is altered, so every checkpoint
+        record stays internally consistent and the chain check still passes.
+        Recomputing the MMR from the entry is what fails.
+        """
+        source = REPO_ROOT / "registry" / "2026" / "09" / "01.ndjson"
+        entry = json.loads(source.read_text(encoding="utf-8").strip())
+        entry["producer"] = "attacker-inserted/9.9.9"
+
+        from trace_verify._checkpoint import (
+            CheckpointRecord,
+            verify_chain_against_entries,
+            verify_checkpoint_chain,
+        )
+        chain_ok, _ = verify_checkpoint_chain(
+            [CheckpointRecord.from_dict(entry["mmr_checkpoint"])]
+        )
+        self.assertTrue(chain_ok, "chain check should still pass; that is the point")
+
+        errors = verify_chain_against_entries([entry])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("altered after it was checkpointed", errors[0])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tampered.ndjson"
+            path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+                code = self._run([str(path)])
+        self.assertEqual(code, 1)
+
+    def test_entries_without_a_checkpoint_are_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "none.ndjson"
+            path.write_text(json.dumps({"batch_id": "x"}) + "\n", encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = self._run([str(path)])
+        self.assertEqual(code, 0)
+        self.assertIn("nothing to verify", buf.getvalue())
+
+
+class TestPackagedWitnessVerifier(unittest.TestCase):
+    """The witness verifier moved from tools/ into the package.
+
+    tools/verify_witness_receipt.py re-exports it, so the evidence packets that
+    cite that path by name keep working and there is still only one copy.
+    """
+
+    def test_tool_reexports_the_package_implementation(self):
+        import verify_witness_receipt as tool
+        from trace_verify import _witness
+        for name in ("load_json", "signing_body", "signing_body_digest", "verify"):
+            self.assertIs(getattr(tool, name), getattr(_witness, name),
+                          f"{name} should be the package's, not a second copy")
+
+    def test_importable_without_the_witness_extra(self):
+        """cbor2 and scitt-cose are imported inside verify(), not at module
+        scope, so the far more common inclusion-only reader can import the
+        package without a CBOR stack installed."""
+        import trace_verify._witness as w
+        self.assertTrue(hasattr(w, "verify"))
+        source = (REPO_ROOT / "src" / "trace_verify" / "_witness.py").read_text(
+            encoding="utf-8"
+        )
+        top_level = [
+            line for line in source.splitlines()
+            if line.startswith(("import ", "from ")) and "__future__" not in line
+        ]
+        for line in top_level:
+            self.assertNotIn("cbor2", line)
+            self.assertNotIn("scitt_cose", line)
+
+    def test_receipt_subcommand_verifies_the_september_packet(self):
+        try:
+            import cbor2  # noqa: F401
+            import scitt_cose  # noqa: F401
+        except ImportError:
+            self.skipTest("witness extra not installed")
+        from trace_verify.__main__ import _main_receipt
+        packet = REPO_ROOT / "docs" / "evidence" / "witness-2026-09-07"
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = _main_receipt([
+                "--checkpoint", str(packet / "checkpoint-1.json"),
+                "--response", str(packet / "witness-post.json"),
+                "--expected-log-id", "trace-registry/v1",
+                "--registry-key",
+                "bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90",
+                "--witness-key",
+                "39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5",
+            ])
+        result = json.loads(buf.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["leaf_index"], 936)
+        self.assertEqual(result["tree_size"], 937)
+        self.assertFalse(result["limits"]["witness_time_established"])
+        self.assertFalse(result["limits"]["grade_cryptographically_bound"])
 
 
 if __name__ == "__main__":

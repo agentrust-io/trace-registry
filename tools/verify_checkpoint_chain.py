@@ -19,9 +19,9 @@ Two independent checks are run over the registry's entries, in order:
      access to the raw entries -- see docs/mmr-checkpoint.md and
      tests/test_mmr_checkpoint_adversarial.py.
 
-  2. From-scratch recomputation against the raw entries: this script rebuilds
-     the MMR leaf by leaf from the entries themselves (via
-     `trace_verify.entry_leaf_digest`) and compares the running root/size at
+  2. From-scratch recomputation against the raw entries
+     (`trace_verify.verify_chain_against_entries`): rebuild the MMR leaf by
+     leaf from the entries themselves and compare the running root/size at
      each checkpoint against what that checkpoint actually claims. This is
      the check that catches a *quiet edit to an already-anchored entry* --
      tampering that leaves every checkpoint record's own internal math
@@ -29,6 +29,7 @@ Two independent checks are run over the registry's entries, in order:
      longer matches what is actually stored under it.
 
 Usage:
+    trace-verify chain registry/2026/06/12.ndjson [MORE...]
     python tools/verify_checkpoint_chain.py registry/2026/06/12.ndjson [MORE...]
 
 Exit status: 0 if every entry with an mmr_checkpoint passes both checks
@@ -44,8 +45,11 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from trace_verify import _mmr as core
-from trace_verify._checkpoint import CheckpointRecord, entry_leaf_digest, verify_checkpoint_chain
+from trace_verify._checkpoint import (
+    CheckpointRecord,
+    verify_chain_against_entries,
+    verify_checkpoint_chain,
+)
 
 
 def _load_entries(paths: list[Path]) -> list[dict]:
@@ -64,39 +68,10 @@ def _load_entries(paths: list[Path]) -> list[dict]:
     return entries
 
 
-def verify_against_raw_entries(entries: list[dict]) -> list[str]:
-    """From-scratch recompute: returns a list of named errors (empty = pass)."""
-    errors: list[str] = []
-    store = core.MemoryNodeStore()
-    checkpointed = [e for e in entries if isinstance(e.get("mmr_checkpoint"), dict)]
-
-    for entry in checkpointed:
-        cp = entry["mmr_checkpoint"]
-        core.add_leaf(store, core.leaf_hash(entry_leaf_digest(entry)))
-        actual_size = store.size()
-        actual_root = core.root_from_peaks(
-            [store.node(p) for p in core.peaks(actual_size)]
-        ).hex()
-
-        claimed_size = cp.get("mmr_size")
-        claimed_root = cp.get("root")
-        batch_id = entry.get("batch_id", "?")
-
-        if actual_size != claimed_size:
-            errors.append(
-                f"batch_id={batch_id!r}: recomputed MMR size {actual_size} != "
-                f"checkpoint's claimed mmr_size {claimed_size!r} -- an entry was "
-                "omitted, duplicated, or inserted out of order"
-            )
-            continue
-        if actual_root != claimed_root:
-            errors.append(
-                f"batch_id={batch_id!r} (mmr_size={claimed_size}): recomputed "
-                f"root {actual_root} != checkpoint's claimed root "
-                f"{claimed_root!r} -- this entry's committed content was "
-                "altered after it was checkpointed"
-            )
-    return errors
+# Kept as a module-level name because the adversarial tests call it directly.
+# The body now lives in trace_verify._checkpoint so that a pip user gets the
+# same check: it was previously the one check reachable only by cloning.
+verify_against_raw_entries = verify_chain_against_entries
 
 
 def main(argv: list[str] | None = None) -> int:
