@@ -55,7 +55,12 @@ reports `witness_time_established` and `grade_cryptographically_bound`, and wher
 both stay false. Read those two fields rather than this paragraph. They are read from the
 receipt's protected header, which the witness signature covers, so a witness that later deploys
 support for them changes what a subsequent receipt carries and cannot change what an issued one
-carries.
+carries. The September 7 receipt's protected header is algorithm and tree profile only
+(`{1: -8, 395: 1}`, receipt SHA-256
+`4e075e8494da20ab72a9b8077432663317c4dad58aa8f8fdcd452c166c20bdd7`), and all three captured
+copies are those same bytes. The receipt binds the checkpoint's nine-field signing body by
+digest; its signature and optional consistency proof are not included in that witnessed digest.
+Registry signature verification is a separate check.
 
 A witness upgrade does not re-stamp an existing checkpoint, and there is no path by which it
 could. The witness registers a checkpoint by its content-addressed entry hash and deduplicates
@@ -79,18 +84,24 @@ compact JSON produces different bytes from the archived `checkpoint-1.json` and 
 signed. This is a property worth stating rather than leaving to be rediscovered as a loophole:
 the digest being field-derived is also why extracting a checkpoint for capture is safe.
 
-`grade_cryptographically_bound` compares two values and a witness has to move both. The signed
-grade counts only when it equals the grade the HTTPS response reports, so a witness that starts
-signing a grade while its response body still reports the previous one leaves the field false,
-correctly: a signed value that disagrees with the untrusted one binds nothing. The value itself
-is opaque to the verifier and is not fixed by this agreement. The September 7 response reported
-`countersigned-observed`; the operator's post-deploy receipts sign `mmr-verified`. Neither is a
-registered term, and the verifier reads the label as a string rather than interpreting it. The September 7 receipt's protected header is algorithm and tree profile only
-(`{1: -8, 395: 1}`, receipt SHA-256
-`4e075e8494da20ab72a9b8077432663317c4dad58aa8f8fdcd452c166c20bdd7`), and all three captured
-copies are those same bytes. The receipt binds the
-checkpoint's nine-field signing body by digest; its signature and optional consistency proof
-are not included in that witnessed digest. Registry signature verification is a separate check.
+`grade_cryptographically_bound` tests agreement, not a value. It is true only when the grade
+signed under `-65537` equals the grade the HTTPS response reports, and no grade string appears
+anywhere in the verifier: a signed `countersigned-observed` matching a reported
+`countersigned-observed` binds exactly as a matching `mmr-verified` would. A witness that starts
+signing a grade while its response body still reports a different one leaves the field false,
+correctly, because a signed value that disagrees with the untrusted one binds nothing.
+
+The grade this registry should expect is `countersigned-observed`, and it is the honest one.
+`trace-registry/v1` is enrolled with the witness as a foreign accumulator: the witness observes,
+timestamps and countersigns the checkpoint bytes it is sent, and does not verify this log's own
+consistency proofs, so it does not check that a checkpoint extends the one before it. Consistency
+across checkpoints is computed by a verifier of this registry, not certified by the witness. The
+operator's conformance checker refuses to present a foreign accumulator as `mmr-verified`, as a
+rule in its code rather than a default. The `mmr-verified` receipt the operator decoded after the
+September 12 deploy came from `asg-selftest/v1`, a native log enrolled to exercise that path end to
+end, and says nothing about what this registry's receipts carry. Confirmed with the operator on
+September 12, 2026. Neither grade is a registered term, and the verifier reads the label as a
+string.
 
 Two properties of that reading are agreements with the witness operator rather than properties
 of COSE or of RFC 9597, and are recorded here so either side can cite them. The accepted CWT
