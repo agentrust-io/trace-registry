@@ -60,7 +60,22 @@ A further capture runs through `tools/capture_witness_receipt.py`, which submits
 checkpoint, reads the receipt back by log id and by digest, and writes the response
 bodies, a capture manifest, the offline verification and `SHA256SUMS` into one
 directory. Every status, timestamp and hash it records comes from an observed
-response, and a failed request is recorded as it failed.
+response, and a failed request is recorded as it failed. Point it at the registry
+file and it lifts the checkpoint out itself, so capturing a published checkpoint
+needs no hand-editing:
+
+```bash
+python tools/capture_witness_receipt.py \
+  --registry-entry registry/2026/09/01.ndjson \
+  --out docs/evidence/witness-NEW/ \
+  --witness-base https://witness.example.org \
+  --expected-log-id trace-registry/v1 \
+  --registry-key HEX --witness-key HEX
+```
+
+Sending the whole entry instead of the checkpoint inside it is the way this goes
+wrong quietly, because the witness then registers a digest over the wrong object
+and returns a receipt that is internally consistent with what it was given.
 The pipeline does not yet submit future checkpoints automatically. Parallel independent
 witnesses remain supported as a deployment choice; only one operator is demonstrated here.
 

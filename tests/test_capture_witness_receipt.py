@@ -232,5 +232,167 @@ class CaptureTests(unittest.TestCase):
         self.assertTrue(verification["verified"])
 
 
+class ExtractFromRegistryEntryTests(unittest.TestCase):
+    """Capturing a published checkpoint should not need hand-editing.
+
+    A checkpoint is published nested inside a registry entry line, so
+    --checkpoint used to mean extracting it into a file yourself first. That is
+    where a capture goes wrong quietly: send the whole entry and the witness
+    registers a digest over the wrong object, and nothing downstream objects,
+    because the digest it returns is consistent with what it was handed.
+    """
+
+    ENTRY = REPO_ROOT / "registry" / "2026" / "09" / "01.ndjson"
+
+    def test_extraction_reproduces_the_digest_that_was_witnessed(self):
+        """The check that matters: same digest as the September 7 capture.
+
+        The extracted bytes are not the archived file's bytes, because this
+        re-serializes to sorted-key compact JSON. The digest is computed from
+        the nine signed fields, so it lands on the value the witness actually
+        signed regardless.
+        """
+        extracted, batch_id = cwr.checkpoint_from_registry_entry(self.ENTRY)
+        archived_bytes = (PACKET / "checkpoint-1.json").read_bytes()
+        self.assertNotEqual(extracted, archived_bytes.strip(),
+                            "expected re-serialization, not a byte copy")
+
+        digest = cwr.vwr.signing_body_digest(
+            cwr.vwr.signing_body(json.loads(extracted))).hex()
+        self.assertEqual(digest, SIGNING_DIGEST)
+        self.assertEqual(batch_id, "0150942febbe")
+
+    def test_serialization_cannot_dodge_the_witness_deduplication(self):
+        """Why re-serializing is safe, stated as a test.
+
+        The witness deduplicates on the content-addressed entry hash, and that
+        hash is SHA-256 of the signing-body digest, which comes from the nine
+        signed fields. So whitespace cannot produce a digest the witness has
+        not seen, and a re-submission of an already-witnessed checkpoint
+        collides however it is formatted. This is the loophole that would
+        otherwise look like a way to obtain a second receipt for checkpoint 1.
+        """
+        entry = json.loads(self.ENTRY.read_text(encoding="utf-8").strip())
+        checkpoint = entry["mmr_checkpoint"]
+        spellings = [
+            json.dumps(checkpoint, sort_keys=True, separators=(",", ":")),
+            json.dumps(checkpoint, indent=2),
+            json.dumps(checkpoint, indent=4, sort_keys=True),
+            json.dumps(checkpoint, separators=(", ", ": ")),
+        ]
+        digests = {
+            cwr.vwr.signing_body_digest(
+                cwr.vwr.signing_body(json.loads(text))).hex()
+            for text in spellings
+        }
+        self.assertEqual(digests, {SIGNING_DIGEST},
+                         "every spelling must land on the witnessed digest")
+        entry_hashes = {
+            hashlib.sha256(bytes.fromhex(d)).hexdigest() for d in digests
+        }
+        self.assertEqual(
+            entry_hashes,
+            {"dee1a92dad155b56f99cf2284e166e3b6b935528e6d27dec8a4f67bbed6dfab6"})
+
+    def test_a_capture_driven_from_the_entry_file_reproduces_the_packet(self):
+        """One command, end to end, over the archived responses."""
+        transport = _Transport(_routes())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name) / "capture"
+        extracted, _ = cwr.checkpoint_from_registry_entry(self.ENTRY)
+        with patch.object(cwr.urllib.request, "urlopen", transport):
+            code = cwr.capture(
+                checkpoint_bytes=extracted, out=out, witness_base=BASE,
+                expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
+                witness_key=WITNESS_KEY,
+                source_path="registry/2026/09/01.ndjson")
+        self.assertEqual(code, 0)
+        verification = json.loads((out / "verification.json").read_text())
+        self.assertTrue(verification["verified"], verification)
+        self.assertEqual(verification["leaf_index"], 936)
+        self.assertEqual(verification["checkpoint_signing_digest"], SIGNING_DIGEST)
+        # The POST body is what the witness registers, so it has to be the
+        # checkpoint and not the entry that carried it.
+        post = next(r for r in transport.seen if r.get_method() == "POST")
+        self.assertEqual(json.loads(post.data), json.loads(extracted))
+        self.assertNotIn("batch_id", json.loads(post.data))
+
+    def test_main_accepts_the_entry_file_and_defaults_its_provenance(self):
+        transport = _Transport(_routes())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name) / "capture"
+        with patch.object(cwr.urllib.request, "urlopen", transport):
+            code = cwr.main([
+                "--registry-entry", str(self.ENTRY),
+                "--out", str(out),
+                "--witness-base", BASE,
+                "--expected-log-id", LOG_ID,
+                "--registry-key", REGISTRY_KEY,
+                "--witness-key", WITNESS_KEY,
+            ])
+        self.assertEqual(code, 0)
+        manifest = json.loads((out / "capture-manifest.json").read_text())
+        # A manifest with no provenance is one a reader cannot re-walk, so the
+        # entry file it came from is recorded without being asked for.
+        self.assertEqual(manifest.get("source_path"), str(self.ENTRY))
+
+    def test_checkpoint_and_registry_entry_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            cwr.main([
+                "--checkpoint", str(PACKET / "checkpoint-1.json"),
+                "--registry-entry", str(self.ENTRY),
+                "--out", "unused", "--witness-base", BASE,
+                "--expected-log-id", LOG_ID,
+                "--registry-key", REGISTRY_KEY, "--witness-key", WITNESS_KEY,
+            ])
+
+    def test_one_of_them_is_required(self):
+        with self.assertRaises(SystemExit):
+            cwr.main([
+                "--out", "unused", "--witness-base", BASE,
+                "--expected-log-id", LOG_ID,
+                "--registry-key", REGISTRY_KEY, "--witness-key", WITNESS_KEY,
+            ])
+
+    def test_an_entry_with_no_checkpoint_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "none.ndjson"
+            path.write_text(json.dumps({"batch_id": "x"}) + "\n", encoding="utf-8")
+            with self.assertRaises(SystemExit) as ctx:
+                cwr.checkpoint_from_registry_entry(path)
+        self.assertIn("no entry with an mmr_checkpoint", str(ctx.exception))
+
+    def test_several_checkpointed_entries_require_a_batch_id(self):
+        entry = json.loads(self.ENTRY.read_text(encoding="utf-8").strip())
+        other = json.loads(json.dumps(entry))
+        other["batch_id"] = "second"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "two.ndjson"
+            path.write_text(json.dumps(entry) + "\n" + json.dumps(other) + "\n",
+                            encoding="utf-8")
+            with self.assertRaises(SystemExit) as ctx:
+                cwr.checkpoint_from_registry_entry(path)
+            self.assertIn("--batch-id", str(ctx.exception))
+            picked, batch_id = cwr.checkpoint_from_registry_entry(path, "second")
+        self.assertEqual(batch_id, "second")
+        self.assertEqual(
+            cwr.vwr.signing_body_digest(
+                cwr.vwr.signing_body(json.loads(picked))).hex(),
+            SIGNING_DIGEST)
+
+    def test_a_checkpoint_missing_a_signed_field_is_refused(self):
+        entry = json.loads(self.ENTRY.read_text(encoding="utf-8").strip())
+        del entry["mmr_checkpoint"]["root"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.ndjson"
+            path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            with self.assertRaises(SystemExit) as ctx:
+                cwr.checkpoint_from_registry_entry(path)
+        self.assertIn("missing signed field", str(ctx.exception))
+        self.assertIn("root", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

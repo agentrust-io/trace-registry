@@ -69,6 +69,16 @@ log has to advance first. Checkpoint 1 will read `witness_time_established: fals
 side changes that. Confirmed with the witness operator on September 12, 2026, after their
 deploy, and recorded here because both sides had assumed otherwise in their own runbooks.
 
+Reformatting the submission does not get around that. The entry hash the witness deduplicates
+on is SHA-256 of the signing-body digest, and that digest is computed from the nine signed
+fields rather than from the submitted bytes, so every JSON spelling of the same checkpoint lands
+on the same entry hash. Extracting checkpoint 1 from `registry/2026/09/01.ndjson` as sorted-key
+compact JSON produces different bytes from the archived `checkpoint-1.json` and the same digest
+`41138372adb1921186ca6a0dbc3433a0ea2f6475cb863205603ab1231968f99a` and entry hash
+`dee1a92dad155b56f99cf2284e166e3b6b935528e6d27dec8a4f67bbed6dfab6`, which is what the witness
+signed. This is a property worth stating rather than leaving to be rediscovered as a loophole:
+the digest being field-derived is also why extracting a checkpoint for capture is safe.
+
 `grade_cryptographically_bound` compares two values and a witness has to move both. The signed
 grade counts only when it equals the grade the HTTPS response reports, so a witness that starts
 signing a grade while its response body still reports the previous one leaves the field false,
