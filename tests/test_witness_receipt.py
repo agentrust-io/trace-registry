@@ -230,10 +230,14 @@ class SignedReceiptMetadataTests(unittest.TestCase):
 
 
 class PostDeployWitnessHeaderTests(unittest.TestCase):
-    """The header shape the witness operator reported after their deploy.
+    """The header shape the witness operator decoded after their deploy.
 
     Reported on September 12, 2026 from a real submission through their live
     service: {1: -8, 395: 1, 15: {6: 1789172972}, -65537: 'mmr-verified'}.
+    That submission was to asg-selftest/v1, a native log, not to this
+    registry. trace-registry/v1 is enrolled as a foreign accumulator and its
+    receipts will carry countersigned-observed; ForeignAccumulatorGradeTests
+    below pins that shape.
     These receipts are minted here, as in the class above, so nothing asserts
     that their service produced anything. What is pinned is what our verifier
     does when a receipt of that shape arrives, before one ever does.
@@ -300,3 +304,57 @@ class PostDeployWitnessHeaderTests(unittest.TestCase):
         self.assertGreaterEqual(self.REPORTED_IAT, CHECKPOINT_EPOCH)
         self.assertLessEqual(self.REPORTED_IAT,
                              CHECKPOINT_EPOCH + MAX_REGISTRATION_DELAY_SECONDS)
+
+
+class ForeignAccumulatorGradeTests(unittest.TestCase):
+    """The grade this registry's receipts will actually carry.
+
+    trace-registry/v1 is enrolled with the witness as a foreign accumulator:
+    observed, timestamped and countersigned, with this log's own consistency
+    proofs not verified by the witness. Its honest grade is
+    countersigned-observed, the operator's conformance checker refuses to
+    present a foreign accumulator as mmr-verified, and on the next checkpoint
+    the signed header and the response body will both say
+    countersigned-observed.
+
+    The question the operator asked on September 12 was whether
+    grade_cryptographically_bound tests agreement or equality to mmr-verified.
+    These pin the answer: agreement, and a matching countersigned-observed binds.
+    """
+
+    setUp = WitnessReceiptTests.setUp
+    check = WitnessReceiptTests.check
+    mint = SignedReceiptMetadataTests.mint
+
+    FOREIGN_GRADE = 'countersigned-observed'
+
+    def test_agreeing_countersigned_observed_binds_both_fields(self):
+        header = {1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH + 3600},
+                  -65537: self.FOREIGN_GRADE}
+        result = self.mint(header, grade=self.FOREIGN_GRADE)
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['signed_grade'], self.FOREIGN_GRADE)
+        self.assertEqual(result['reported_grade'], self.FOREIGN_GRADE)
+        self.assertTrue(result['limits']['witness_time_established'])
+        self.assertTrue(result['limits']['grade_cryptographically_bound'],
+                        'a matching foreign-accumulator grade must bind')
+
+    def test_disagreement_fails_in_either_direction(self):
+        header = {1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH + 3600},
+                  -65537: self.FOREIGN_GRADE}
+        result = self.mint(header, grade='mmr-verified')
+        self.assertTrue(result['verified'], result)
+        self.assertFalse(result['limits']['grade_cryptographically_bound'])
+
+    def test_the_verifier_names_no_grade_value(self):
+        """Agreement is structural, not a property of today's strings.
+
+        If either term ever appears in the verifier, the field has started
+        preferring a value, which is the conflation the operator asked about.
+        """
+        source = (Path(__file__).resolve().parents[1] / 'src' / 'trace_verify'
+                  / '_witness.py').read_text(encoding='utf-8')
+        code = '\n'.join(line for line in source.splitlines()
+                         if not line.lstrip().startswith('#'))
+        for term in ('mmr-verified', 'countersigned-observed'):
+            self.assertNotIn(term, code)
