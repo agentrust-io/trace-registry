@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -121,6 +122,43 @@ def _load_entry(source: str, batch_id: str | None) -> dict:
     return entries[0]
 
 
+def _producers_base_from_entry_url(entry_url: str) -> str | None:
+    """Derive the producers/ base URL from a registry entry URL.
+
+    Registry entries live under <root>/registry/YYYY/MM/DD.ndjson and producer
+    keys under <root>/producers/. Deriving one from the other is what makes
+    --entry-url enough on its own: fetching the entry without the key that
+    signed it leaves the caller able to check inclusion and not authorship,
+    which is the weaker half. Returns None when the URL is not shaped like a
+    registry entry, and the derived URL is re-checked against the host
+    allowlist before anything is fetched.
+    """
+    marker = "/registry/"
+    if marker not in entry_url:
+        return None
+    return entry_url.rsplit(marker, 1)[0] + "/producers"
+
+
+def _fetch_producer_key(base_url: str, producer_id: str, into: Path) -> str:
+    """Fetch one producer key file into `into`, named as the loader expects.
+
+    The file lands under the same name a clone would have, so the existing
+    loader does the parsing and the producer_id validation that keeps a
+    crafted id from escaping the directory. Returns the URL fetched.
+    """
+    from trace_verify._signature import is_valid_producer_id
+
+    if not is_valid_producer_id(producer_id):
+        _die(f"invalid producer id {producer_id!r}", code=1)
+    filename = producer_id.replace("/", "-") + ".json"
+    url = base_url.rstrip("/") + "/" + filename
+    reason = _check_url_allowed(url)
+    if reason is not None:
+        _die(f"refusing to fetch producer key from {url}: {reason}")
+    (into / filename).write_text(_fetch_url(url), encoding="utf-8")
+    return url
+
+
 def _die(msg: str, code: int = 2) -> None:
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(code)
@@ -128,7 +166,7 @@ def _die(msg: str, code: int = 2) -> None:
 
 def _output(
     ok: bool, entry: dict, sig_result: bool | None, as_json: bool,
-    canonicalization_id: str,
+    canonicalization_id: str, key_source: str | None = None,
 ) -> None:
     if as_json:
         result: dict = {
@@ -140,6 +178,8 @@ def _output(
         }
         if sig_result is not None:
             result["signature_valid"] = sig_result
+        if key_source is not None:
+            result["producer_key_source"] = key_source
         print(json.dumps(result))
     elif ok:
         sig_note = ""
@@ -152,6 +192,11 @@ def _output(
             f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}, "
             f"canonicalization_id {canonicalization_id!r}){sig_note}"
         )
+        if key_source is not None:
+            # A key fetched over the network is a different trust statement
+            # from one already on disk, so say where it came from rather than
+            # letting the OK line imply a local check.
+            print(f"     producer key fetched from {key_source}")
     else:
         print(
             "FAIL: inclusion proof does not verify against the registry entry",
@@ -191,11 +236,20 @@ def build_parser() -> argparse.ArgumentParser:
                        "report success on Merkle inclusion alone. Inclusion proves the "
                        "claim was anchored, NOT that the named producer signed it."
                    ))
-    p.add_argument("--producers-dir", default=None, metavar="DIR",
-                   help=(
-                       "directory containing producer key .json files "
-                       "(default: producers/ relative to the current directory)"
-                   ))
+    producers_group = p.add_mutually_exclusive_group()
+    producers_group.add_argument("--producers-dir", default=None, metavar="DIR",
+                                 help=(
+                                     "directory containing producer key .json files "
+                                     "(default: producers/ relative to the current "
+                                     "directory)"
+                                 ))
+    producers_group.add_argument("--producers-url", default=None, metavar="URL",
+                                 help=(
+                                     "base URL of the producers/ directory, e.g. a raw "
+                                     "GitHub URL. Derived from --entry-url when neither "
+                                     "producers option is given, so --entry-url alone "
+                                     "needs no clone"
+                                 ))
     return p
 
 
@@ -217,6 +271,7 @@ def _main_inclusion(argv: list[str] | None) -> int:
     entry = _load_entry(entry_source, args.batch_id)
 
     sig_result: bool | None = None
+    key_source: str | None = None
     canonicalization_id = entry.get("canonicalization_id", VINTAGE_CANONICALIZATION)
 
     try:
@@ -259,7 +314,9 @@ def _main_inclusion(argv: list[str] | None) -> int:
             verify_claim_against_registry,
         )
 
-        producers_dir = Path(args.producers_dir) if args.producers_dir else Path("producers")
+        producers_url = args.producers_url
+        if producers_url is None and args.producers_dir is None and args.entry_url:
+            producers_url = _producers_base_from_entry_url(args.entry_url)
         # Resolve the producer identity: prefer the claim's own 'producer'
         # field, falling back to the producer named in the anchored registry
         # entry (claim bodies are not required to carry a top-level producer).
@@ -286,9 +343,19 @@ def _main_inclusion(argv: list[str] | None) -> int:
                 code=1,
             )
 
-        sig_result, reason = verify_claim_against_registry(
-            claim, producer_id, producers_dir
-        )
+        if producers_url:
+            with tempfile.TemporaryDirectory() as tmp:
+                key_source = _fetch_producer_key(producers_url, producer_id, Path(tmp))
+                sig_result, reason = verify_claim_against_registry(
+                    claim, producer_id, Path(tmp)
+                )
+        else:
+            producers_dir = (
+                Path(args.producers_dir) if args.producers_dir else Path("producers")
+            )
+            sig_result, reason = verify_claim_against_registry(
+                claim, producer_id, producers_dir
+            )
         if not sig_result:
             if args.as_json:
                 print(
@@ -304,7 +371,8 @@ def _main_inclusion(argv: list[str] | None) -> int:
                 _die(reason, code=1)
             ok = False
 
-    _output(ok, entry, sig_result, args.as_json, canonicalization_id)
+    _output(ok, entry, sig_result, args.as_json, canonicalization_id,
+            key_source=key_source)
     return 0 if ok else 1
 
 

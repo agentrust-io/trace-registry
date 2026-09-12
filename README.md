@@ -105,10 +105,27 @@ trace-verify \
 # OK: claim is included in batch '2026-06-12-001' (root sha256:9279..., ts 2026-06-12T18:09:41Z), signature valid
 ```
 
-Exit code 0 means the claim is proven included and its producer's signature
-verified; 1 means one of those failed. You do not need this repository: pass
-`--entry-url` with a raw GitHub URL instead of `--entry` and the entry is
-fetched over https, from an allowlisted host only.
+Exit code 0 means the claim is proven included **and** its producer's signature
+verified; 1 means one of those failed.
+
+You do not need a clone. Swap `--entry` for `--entry-url` and both the entry and
+the producer key that signed the claim are fetched over https, from an
+allowlisted host only:
+
+```bash
+trace-verify \
+  --claim your-record.json \
+  --proof your-record.proof.json \
+  --entry-url https://raw.githubusercontent.com/agentrust-io/trace-registry/main/registry/2026/06/12.ndjson
+# OK: claim is included in batch '2026-06-12-001' (...), signature valid
+#      producer key fetched from .../producers/cmcp-gateway-0.1.0.json
+```
+
+The producers base is derived from the entry URL, and the derived URL goes
+through the same host allowlist. Point it elsewhere with `--producers-url`, or
+at a local directory with `--producers-dir`. A key that arrived over the network
+is a different trust statement from one already on disk, so the command says
+which it used rather than letting the OK line imply a local check.
 
 Inclusion proves the signed claim bytes were anchored at the entry's timestamp.
 It does not prove the claim is true, and it is not a statement about anything

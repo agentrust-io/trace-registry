@@ -12,6 +12,28 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **`trace-verify` 0.4.1: verifying a claim no longer needs a clone.**
+  `--entry-url` fetched the registry entry and stopped there. The producer key
+  still had to be on disk, so a reader without a clone got
+  `no registered key for producer '...'` and exit 1. The honest workaround was
+  `--no-verify-signature`, which checks inclusion and not authorship: the weaker
+  half of the answer, reached by turning off the stronger half.
+
+  The key now comes from the same allowlisted host as the entry. The producers
+  base is derived from the entry URL, the derived URL is re-checked against the
+  allowlist so derivation cannot smuggle a fetch past the SSRF guard, and the
+  fetched file lands under the name the existing loader expects, so the
+  producer-id validation that keeps a crafted id inside the directory still
+  runs. `--producers-url` overrides the derivation; `--producers-dir` still
+  takes a local directory, and the two are mutually exclusive.
+
+  The output names the source when a key came over the network, in text and as
+  `producer_key_source` in `--json`. A key fetched from a host is a different
+  trust statement from one already on disk and the OK line should not blur them.
+
+  0.4.0 shipped a README that claimed `--entry-url` was enough on its own. It
+  was not. This is that claim made true rather than withdrawn.
+
 - **One install answers all three questions (`trace-verify` 0.4.0 CLI).**
   Inclusion had a command. Chain verification was a Python API with no command.
   Witness-receipt verification was not in the package at all. The second and
