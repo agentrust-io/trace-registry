@@ -31,6 +31,23 @@ jobs:
       - name: Install build tools
         run: pip install --require-hashes -r requirements/publish.txt
 
+      - name: Check the tag matches the packaged version
+        # A release event checks out the tag, so this compares what is about to
+        # be built against what the release is called. Without it the two can
+        # disagree silently and PyPI keeps whichever the build produced: a
+        # sibling repository once shipped a release with no version bump at all,
+        # and trace-verify 0.3.0 and 0.3.1 both reported 0.1.0 to --version.
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          packaged=$(python -c "import re,pathlib; print(re.search(r'^version = \"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M).group(1))")
+          runtime=$(python -c "import re,pathlib; print(re.search(r'^__version__ = \"([^\"]+)\"', pathlib.Path('src/trace_verify/__init__.py').read_text(), re.M).group(1))")
+          echo "tag=$TAG pyproject=$packaged __version__=$runtime"
+          test "$TAG" = "v$packaged" || { echo "::error::tag $TAG does not match pyproject version $packaged"; exit 1; }
+          test "$runtime" = "$packaged" || { echo "::error::__version__ $runtime does not match pyproject version $packaged"; exit 1; }
+
       - name: Build wheel and sdist
         run: python -m build
 

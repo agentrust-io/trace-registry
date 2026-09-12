@@ -15,6 +15,8 @@ entry are enough for us to reproduce; please do not paste anything you consider
 sensitive, a Trust Record can carry identifiers you may not want public. -->
 
 ```bash
+trace-verify --claim ... --proof ... --entry ...
+# or, from a clone of this repository:
 python tools/verify_inclusion.py --claim ... --proof ... --entry ...
 ```
 

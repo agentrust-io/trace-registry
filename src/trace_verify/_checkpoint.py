@@ -272,3 +272,53 @@ def verify_checkpoint_chain(
             )
 
     return not errors, errors
+
+
+def verify_chain_against_entries(entries: list[dict]) -> list[str]:
+    """Rebuild the MMR from the raw entries and compare it to what each
+    checkpoint claims. Returns a list of named errors; empty means pass.
+
+    This is a different question from verify_checkpoint_chain(). That one asks
+    whether the checkpoints are consistent with each other, which a forged or
+    forked chain fails. This one asks whether they are consistent with the
+    entries actually stored under them, which is what catches a quiet edit to
+    an already-anchored entry: the checkpoint records' own internal math is
+    still self-consistent after such an edit, because nothing in the chain
+    changed, so the first check passes and only this one fails.
+
+    Entries without an ``mmr_checkpoint`` are not folded in. The chain only
+    ever claims to cover the entries it checkpointed, so an unanchored entry
+    beside them is outside the question rather than a failure of it.
+    """
+    errors: list[str] = []
+    store = _mmr.MemoryNodeStore()
+
+    for entry in entries:
+        cp = entry.get(CHECKPOINT_KIND)
+        if not isinstance(cp, dict):
+            continue
+        _mmr.add_leaf(store, _mmr.leaf_hash(entry_leaf_digest(entry)))
+        actual_size = store.size()
+        actual_root = _mmr.root_from_peaks(
+            [store.node(p) for p in _mmr.peaks(actual_size)]
+        ).hex()
+
+        claimed_size = cp.get("mmr_size")
+        claimed_root = cp.get("root")
+        batch_id = entry.get("batch_id", "?")
+
+        if actual_size != claimed_size:
+            errors.append(
+                f"batch_id={batch_id!r}: recomputed MMR size {actual_size} != "
+                f"checkpoint's claimed mmr_size {claimed_size!r} -- an entry was "
+                "omitted, duplicated, or inserted out of order"
+            )
+            continue
+        if actual_root != claimed_root:
+            errors.append(
+                f"batch_id={batch_id!r} (mmr_size={claimed_size}): recomputed "
+                f"root {actual_root} != checkpoint's claimed root "
+                f"{claimed_root!r} -- this entry's committed content was "
+                "altered after it was checkpointed"
+            )
+    return errors

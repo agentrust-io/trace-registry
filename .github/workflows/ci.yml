@@ -52,6 +52,21 @@ jobs:
             --proof samples/inclusion-proof.json \
             --entry registry/2026/06/12.ndjson \
             --json | python -c "import json,sys; r=json.load(sys.stdin); assert r['verified'], r"
+          # The other two questions the CLI answers, run the way a reader
+          # who only ran `pip install` runs them. Both were reachable
+          # solely by cloning this repository until 0.4.0, so a regression
+          # here is a regression in what a third party can check without
+          # our tree.
+          trace-verify chain registry/2026/06/12.ndjson registry/2026/09/01.ndjson
+          trace-verify chain registry/2026/09/01.ndjson \
+            --json | python -c "import json,sys; r=json.load(sys.stdin); assert r['verified'] and r['checkpoints'] == 1, r"
+          trace-verify receipt \
+            --checkpoint docs/evidence/witness-2026-09-07/checkpoint-1.json \
+            --response docs/evidence/witness-2026-09-07/witness-post.json \
+            --expected-log-id trace-registry/v1 \
+            --registry-key bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90 \
+            --witness-key 39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5 \
+            | python -c "import json,sys; r=json.load(sys.stdin); assert r['verified'] and r['leaf_index'] == 936, r"
 
       - name: Determine base SHA for append-only check
         id: base

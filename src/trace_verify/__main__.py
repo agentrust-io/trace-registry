@@ -1,10 +1,26 @@
 """CLI entry point for trace-verify.
 
-Usage:
+Three questions, one command each:
+
     trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson
+        Is this claim anchored in the registry, and did its producer sign it?
+
+    trace-verify chain ENTRY.ndjson [MORE...]
+        Does the registry checkpoint chain hold, and does it still match the
+        entries stored under it?
+
+    trace-verify receipt --checkpoint CP.json --response POST.json
+        Does an external witness's COSE receipt verify offline against keys
+        you pin? Needs the witness extra: pip install "trace-verify[witness]".
+
+Other forms of the inclusion check:
+
     trace-verify --claim CLAIM.json --proof PROOF.json --entry-url URL
     trace-verify --claim CLAIM.json --proof PROOF.json --entry ENTRY.ndjson --producers-dir ./producers
     python -m trace_verify ...
+
+The inclusion check takes no subcommand name, so every invocation written
+against 0.3.x keeps working unchanged.
 
 By default the claim's Ed25519 signature is verified against the producer key
 registry: exit code 0 means BOTH Merkle inclusion and the producer signature
@@ -183,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_inclusion(argv: list[str] | None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -290,6 +306,158 @@ def main(argv: list[str] | None = None) -> int:
 
     _output(ok, entry, sig_result, args.as_json, canonicalization_id)
     return 0 if ok else 1
+
+
+def _read_entries(names: list[str]) -> list[dict]:
+    """Load registry entries from one or more .ndjson files, in order."""
+    entries: list[dict] = []
+    for name in names:
+        path = Path(name)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            _die(f"cannot read {path}: {exc}")
+        for lineno, line in enumerate(raw.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                _die(f"{path}:{lineno}: invalid JSON: {exc}")
+            if not isinstance(entry, dict):
+                _die(f"{path}:{lineno}: entry is not a JSON object")
+            entries.append(entry)
+    return entries
+
+
+def _main_chain(argv: list[str]) -> int:
+    """Verify the checkpoint chain, and the entries stored under it."""
+    p = argparse.ArgumentParser(
+        prog="trace-verify chain",
+        description=(
+            "Verify a TRACE registry checkpoint chain. Two independent checks "
+            "run: that each checkpoint carries a genuine MMR consistency proof "
+            "back to the one before it, and that rebuilding the MMR from the "
+            "raw entries reproduces what each checkpoint claims. The second is "
+            "the one that catches a quiet edit to an already-anchored entry."
+        ),
+    )
+    p.add_argument("entries", nargs="+", metavar="ENTRY",
+                   help="registry .ndjson file(s), in registry order")
+    p.add_argument("--json", action="store_true", dest="as_json",
+                   help="emit a machine-readable JSON result instead of plain text")
+    args = p.parse_args(argv)
+
+    from trace_verify._checkpoint import (
+        CheckpointRecord,
+        verify_chain_against_entries,
+        verify_checkpoint_chain,
+    )
+
+    entries = _read_entries(args.entries)
+    checkpointed = [e for e in entries if isinstance(e.get("mmr_checkpoint"), dict)]
+    if not checkpointed:
+        if args.as_json:
+            print(json.dumps({"verified": True, "checkpoints": 0, "errors": []}))
+        else:
+            print("no entries with mmr_checkpoint found; nothing to verify")
+        return 0
+
+    checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
+    _, chain_errors = verify_checkpoint_chain(checkpoints)
+    errors = chain_errors + verify_chain_against_entries(entries)
+
+    if args.as_json:
+        result: dict = {
+            "verified": not errors,
+            "checkpoints": len(checkpointed),
+            "errors": errors,
+        }
+        if not errors:
+            result["mmr_size"] = checkpoints[-1].mmr_size
+            result["root"] = checkpoints[-1].root
+        print(json.dumps(result))
+        return 0 if not errors else 1
+
+    if errors:
+        for err in errors:
+            print(f"FAIL: {err}", file=sys.stderr)
+        print(
+            f"FAIL: {len(errors)} problem(s) found across "
+            f"{len(checkpointed)} checkpoint(s)"
+        )
+        return 1
+    print(
+        f"OK: {len(checkpointed)} checkpoint(s) verified, chain-consistent and "
+        f"matching the raw entries (mmr_size {checkpoints[-1].mmr_size}, "
+        f"root {checkpoints[-1].root})"
+    )
+    return 0
+
+
+def _main_receipt(argv: list[str]) -> int:
+    """Verify an external witness's COSE receipt offline against pinned keys."""
+    p = argparse.ArgumentParser(
+        prog="trace-verify receipt",
+        description=(
+            "Verify a TRACE checkpoint receipt from an external witness, "
+            "offline, against keys you supply. Both keys are required "
+            "arguments and neither is ever fetched: a receipt verified under a "
+            "key the receipt itself named would prove nothing about who signed "
+            "it."
+        ),
+    )
+    p.add_argument("--checkpoint", required=True, metavar="FILE",
+                   help="the signed checkpoint JSON that was submitted")
+    p.add_argument("--response", required=True, metavar="FILE",
+                   help="the witness response JSON carrying receipt_b64")
+    p.add_argument("--registry-key", required=True, metavar="HEX",
+                   help="independently accepted raw Ed25519 registry key, hex")
+    p.add_argument("--witness-key", required=True, metavar="HEX",
+                   help="independently accepted raw Ed25519 witness key, hex")
+    p.add_argument("--expected-log-id", required=True, metavar="ID",
+                   help="the log id the checkpoint must name, e.g. trace-registry/v1")
+    args = p.parse_args(argv)
+
+    try:
+        import cbor2  # noqa: F401
+        import scitt_cose  # noqa: F401
+    except ImportError as exc:
+        _die(
+            f"the witness extra is not installed ({exc}). "
+            'Install it with: pip install "trace-verify[witness]"'
+        )
+
+    from trace_verify import _witness
+
+    try:
+        result = _witness.verify(
+            _witness.load_json(args.checkpoint),
+            _witness.load_json(args.response),
+            registry_key=args.registry_key,
+            witness_key=args.witness_key,
+            expected_log_id=args.expected_log_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - reported to the caller, not swallowed
+        result = {"verified": False, "error": f"{type(exc).__name__}: {exc}"}
+    print(json.dumps(result, indent=2))
+    return 0 if result["verified"] else 1
+
+
+_SUBCOMMANDS = {"chain": _main_chain, "receipt": _main_receipt}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Dispatch to a subcommand, or run the inclusion check.
+
+    An unrecognised first token is not an error here. It falls through to the
+    inclusion parser, which is what keeps every 0.3.x invocation working and
+    what reports the argument error in the vocabulary the caller used.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in _SUBCOMMANDS:
+        return _SUBCOMMANDS[argv[0]](argv[1:])
+    return _main_inclusion(argv)
 
 
 if __name__ == "__main__":

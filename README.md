@@ -84,40 +84,75 @@ entry per line, validated by CI against
 Entries are append-only. See [docs/anchor-format.md](docs/anchor-format.md)
 for field semantics.
 
-## Verifying a claim
+## Using the registry
 
-You need three things: your signed claim (Trust Record), the inclusion proof
-your producer gave you, and the registry entry for the batch. Then:
+There are three questions you can ask of this registry, and one command each.
+Install once:
 
 ```bash
-git clone https://github.com/agentrust-io/trace-registry.git
-cd trace-registry
-python tools/verify_inclusion.py \
+pip install trace-verify
+```
+
+**Is my claim in the registry?** You need three things: your signed claim (Trust
+Record), the inclusion proof your producer gave you, and the registry entry for
+the batch.
+
+```bash
+trace-verify \
   --claim samples/example-trust-record.json \
   --proof samples/inclusion-proof.json \
   --entry registry/2026/06/12.ndjson
-# OK: claim is included in batch '2026-06-12-001' (root sha256:9279..., ts 2026-06-12T18:09:41Z)
+# OK: claim is included in batch '2026-06-12-001' (root sha256:9279..., ts 2026-06-12T18:09:41Z), signature valid
 ```
 
-Exit code 0 means the claim is proven included; 1 means it is not. The
-verifier is a single standard-library Python file, so you can audit it (or
-reimplement it from the spec) rather than trust it. The `samples/` files above
-are a real anchored example you can use to exercise the tooling.
+Exit code 0 means the claim is proven included and its producer's signature
+verified; 1 means one of those failed. You do not need this repository: pass
+`--entry-url` with a raw GitHub URL instead of `--entry` and the entry is
+fetched over https, from an allowlisted host only.
 
-Inclusion verification proves the signed claim bytes were anchored at the
-entry's timestamp. Validating the claim's signature against the producer key
-is a separate TRACE step.
+Inclusion proves the signed claim bytes were anchored at the entry's timestamp.
+It does not prove the claim is true, and it is not a statement about anything
+the claim asserts.
 
-Batches anchored via the aggregator (below) also carry a signed `mmr_checkpoint`
-proving, by math, that each entry honestly extends the previous one -- not
-just that git history was not rewritten. Verify the whole chain with:
+**Does the registry's own history hold?** Batches anchored via the aggregator
+carry a signed `mmr_checkpoint` proving, by math, that each entry honestly
+extends the previous one, not just that git history was not rewritten.
 
 ```bash
-python tools/verify_checkpoint_chain.py registry/2026/06/12.ndjson
+trace-verify chain registry/2026/06/12.ndjson registry/2026/09/01.ndjson
 ```
 
-See [docs/mmr-checkpoint.md](docs/mmr-checkpoint.md) for how this works and
-what it does and does not catch.
+Two independent checks run. The first asks whether the checkpoints are
+consistent with each other, which a forged or forked chain fails. The second
+rebuilds the Merkle Mountain Range from the entries themselves and compares it
+to what each checkpoint claims, which is what catches a quiet edit to an entry
+that was already anchored. See
+[docs/mmr-checkpoint.md](docs/mmr-checkpoint.md) for what each does and does not
+catch.
+
+**Does an outside witness agree?** Verifying a witness receipt needs COSE, so it
+ships as an extra rather than in the base install:
+
+```bash
+pip install "trace-verify[witness]"
+trace-verify receipt \
+  --checkpoint docs/evidence/witness-2026-09-07/checkpoint-1.json \
+  --response docs/evidence/witness-2026-09-07/witness-post.json \
+  --expected-log-id trace-registry/v1 \
+  --registry-key bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90 \
+  --witness-key 39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5
+```
+
+Both keys are arguments and neither is ever fetched. A receipt verified under a
+key the receipt itself named would prove nothing about who signed it, so you
+pin the keys you accept and the command refuses anything else.
+
+Nothing above requires trusting us. The verifier is a small package you can
+audit, the anchor construction is specified in
+[docs/anchor-format.md](docs/anchor-format.md), and a third party can
+reimplement the whole thing from that document. The `samples/` files are a real
+anchored example to exercise the tooling against, and the `tools/` scripts in
+this repository are the same code reached by a different path.
 
 ## Anchoring claims
 

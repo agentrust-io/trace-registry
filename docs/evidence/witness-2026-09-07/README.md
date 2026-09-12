@@ -25,6 +25,21 @@ python tools/verify_witness_receipt.py \
   --witness-key 39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5
 ```
 
+Without a clone, the same verifier and the same arguments, against the packet
+files wherever you saved them:
+
+```sh
+pip install "trace-verify[witness]"
+trace-verify receipt --checkpoint checkpoint-1.json --response witness-post.json \
+  --expected-log-id trace-registry/v1 \
+  --registry-key bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90 \
+  --witness-key 39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5
+```
+
+The pinned lock and the extra are two ways to install the same two libraries.
+The lock fixes exact hashes and is what this repository's CI uses; the extra
+takes a version range and is what a reader without the lock gets.
+
 Expected: `verified: true`, seven successful checks, leaf 936, tree size 937.
 The command does not fetch keys or make network calls. Tests run it with sockets
 disabled and exercise altered bodies/signatures, wrong key pins, a different
