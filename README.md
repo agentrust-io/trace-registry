@@ -1,6 +1,6 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0_(code)_%2F_CC_BY_4.0_(data)-lightgrey.svg)](LICENSE)
-[![TRACE Spec](https://img.shields.io/badge/TRACE-Spec_v0.1-0ea5e9)](https://github.com/agentrust-io/trace-spec)
-[![Discord](https://dcbadge.limes.pink/api/server/9JWNpH7E?style=flat)](https://discord.gg/9JWNpH7E)
+[![TRACE Spec](https://img.shields.io/badge/TRACE-Spec_v0.2-0ea5e9)](https://github.com/agentrust-io/trace-spec)
+[![Discord](https://dcbadge.limes.pink/api/server/grgzFEHgkj?style=flat)](https://discord.gg/grgzFEHgkj)
 
 # TRACE Registry
 
@@ -10,9 +10,7 @@ repository as an append-only record. Git's commit history is the
 tamper-evidence layer: any rewrite of a published entry diverges the commit
 hashes that auditors and mirrors have already observed.
 
-Project support is recognized in [SPONSORS.md](SPONSORS.md). Sponsorship is
-separate from producer registration, registry governance, verification
-semantics, and mirror operation.
+Project support is recognized in [SPONSORS.md](SPONSORS.md).
 
 ## Current Registry State
 
@@ -247,7 +245,7 @@ auditable by anyone.
 
 ## Community
 
-Questions, feedback, integration help: [Discord](https://discord.gg/9JWNpH7E).
+Questions, feedback, integration help: [Discord](https://discord.gg/grgzFEHgkj).
 
 ## License
 
