@@ -22,46 +22,62 @@ If you prefer an independent clone (recommended for maximum independence from Gi
 
 ### Step 2: Keep it synchronized
 
-Add a GitHub Actions workflow to your fork that syncs from the canonical repo daily:
+Two constraints decide where the sync job can live.
+
+1. **The mirrored branch must carry no commit of yours.** A workflow file committed to the fork's `main` puts the mirror one commit ahead of canonical. From then on its head can never equal canonical's, `merge --ff-only` has nothing to fast-forward to, and the ancestry check below reports a rewrite that did not happen. Keep the job on a separate branch (here `mirror-ops`) and make that branch the repository default, because GitHub runs scheduled workflows from the default branch only.
+2. **The default Actions token cannot do the push.** `GITHUB_TOKEN` may not push commits that touch `.github/workflows/`, and canonical `main` changes its workflows regularly. Use a token scoped to the mirror repository alone, with Contents and Workflows write, stored as the secret `MIRROR_PUSH_TOKEN`. A deploy key with write access works too where your organization allows them.
 
 ```yaml
-# .github/workflows/sync-mirror.yml
+# .github/workflows/sync-mirror.yml, on the mirror-ops branch
 name: Sync mirror
 
 on:
   schedule:
-    - cron: "0 */6 * * *"  # every 6 hours
+    - cron: "17,47 * * * *"  # twice an hour
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-mirror
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fetch and fast-forward from canonical
+      - name: Fast-forward main from canonical, refuse a rewrite
+        env:
+          PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
         run: |
-          git remote add canonical https://github.com/agentrust-io/trace-registry.git || true
-          git fetch canonical main
-          # Refuse to sync if the canonical has rewound history
-          if ! git merge-base --is-ancestor HEAD canonical/main; then
-            echo "ERROR: canonical/main is not a descendant of our HEAD -- possible history rewrite"
+          set -euo pipefail
+          git clone --quiet --branch main "https://github.com/${GITHUB_REPOSITORY}.git" mirror
+          cd mirror
+          git remote add canonical https://github.com/agentrust-io/trace-registry.git
+          git fetch --quiet canonical main
+          before="$(git rev-parse HEAD)"
+          target="$(git rev-parse canonical/main)"
+          # Refuse to sync if canonical no longer descends from what we hold
+          if ! git merge-base --is-ancestor "$before" "$target"; then
+            echo "::error::canonical main ($target) does not descend from mirror main ($before) -- possible history rewrite"
             exit 1
           fi
-          git merge --ff-only canonical/main
-          git push origin main
+          [ "$before" = "$target" ] && exit 0
+          git merge --quiet --ff-only canonical/main
+          auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" push --quiet origin main
 ```
 
-The `merge-base --is-ancestor` check is the core safety gate: it detects history rewrites before accepting them.
+The `merge-base --is-ancestor` check is the core safety gate: it detects history rewrites before accepting them. On failure the mirror is left where it was, so the two heads remain as evidence.
+
+Sync more often than the canonical health check runs (every 6 hours). Between a canonical commit and the next sync the mirror is behind, and `check_mirrors.py` reports behind as `diverged`, so a long sync interval shows up as recurring false alarms.
+
+GitHub pauses scheduled workflows in a repository that has seen no activity for 60 days. A mirror of a quiet registry can stop syncing without anything failing. `check_mirrors.py` reports such a mirror as `diverged`, the same status it gives a rewritten one, so a stale mirror is visible but telling the two apart takes an ancestry check between the two heads.
 
 ### Step 3: Publish your HEAD SHA
 
-The `check_mirrors.py` tool reads HEAD SHA from the GitHub API (`https://api.github.com/repos/{owner}/{repo}/commits/HEAD`). If your mirror is a GitHub repo, this works out of the box with no extra configuration.
+The `check_mirrors.py` tool reads the mirror's head from the URL you register as `head_api`. For a GitHub mirror, register the mirrored branch by name, `https://api.github.com/repos/{owner}/{repo}/commits/main`. `commits/HEAD` resolves to the default branch, which under Step 2 is `mirror-ops` and not the branch being mirrored.
 
 If you use non-GitHub hosting, expose a URL that returns a JSON object containing `"sha"` at the top level:
 
