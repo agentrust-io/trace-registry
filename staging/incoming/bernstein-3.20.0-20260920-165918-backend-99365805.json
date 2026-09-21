@@ -1,0 +1,41 @@
+{
+  "producer": "bernstein/3.20.0",
+  "trace": {
+    "appraisal": {
+      "status": "none",
+      "timestamp": 1789923666,
+      "verifier": "https://bernstein.run/trace/verifier"
+    },
+    "build_provenance": {
+      "digest": "sha256:b77a81d8049d1bfbfbd322124eb8ceb3c6a05f91336e874a388cef7059cef1e0",
+      "provenance_uri": "https://github.com/sipyourdrink-ltd/bernstein/releases",
+      "slsa_level": 0
+    },
+    "cnf": {
+      "jwk": {
+        "crv": "Ed25519",
+        "kid": "install-0000000000000000",
+        "kty": "OKP",
+        "x": "ff3LjX7m5f7vj3YD5NS_LqtEzEa_wkD5ZnNPBpSD3o8"
+      }
+    },
+    "data_class": "confidential",
+    "eat_profile": "tag:agentrust-io.com,2026:trace-v0.2",
+    "iat": 1789923666,
+    "model": {
+      "model_id": "claude-haiku-4-5-20251001",
+      "provider": "anthropic"
+    },
+    "policy": {
+      "bundle_hash": "sha256:a8bc7643a9c822bf7a3a410fff1f1be4bce47f2ea99ec22c444d85c9ec67094f",
+      "enforcement_mode": "enforce"
+    },
+    "runtime": {
+      "measurement": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "platform": "software-only"
+    },
+    "signature": "8WWLHXTC0fe_63KDjaiihseCL6dSm2MasRDurSyV_6o2x1lgiwzNAU3Vrnt0f7Ho9E0rfajNF22gedCI6yNoCg",
+    "subject": "spiffe://bernstein.run/run/20260920-165918/exec/backend-99365805"
+  },
+  "signature": "bDDPdOBOgM37WqG6Jh_aSkEKIM7K0VdZjcIx4g0_nV4NpzFoItk2pC8YUtpyLsyVUxx__sFxBePjqn0Fb494Bg"
+}
