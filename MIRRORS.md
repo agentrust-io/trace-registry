@@ -12,7 +12,11 @@ The TRACE Registry is append-only and its tamper-evidence depends on the Merkle 
 
 ## Registered mirrors
 
-No mirrors are registered yet. See [docs/mirroring.md](docs/mirroring.md) for how to become a mirror operator and add your entry here.
+| Name | GitHub | Clone URL | Contact | Since |
+|---|---|---|---|---|
+| Sip Your Drink Ltd | [sipyourdrink-ltd/trace-registry-mirror](https://github.com/sipyourdrink-ltd/trace-registry-mirror) (mirrored branch: `main`) | https://github.com/sipyourdrink-ltd/trace-registry-mirror.git | forte@bernstein.run | 2026-09-20 |
+
+See [docs/mirroring.md](docs/mirroring.md) for how to become a mirror operator and add your entry here.
 
 If you represent an organization that can hold an independent clone (security research group, university AI governance lab, standards body, or neutral infrastructure provider), please open a pull request adding your entry to both this file and `mirrors.json`.
 
@@ -39,7 +43,7 @@ To register your mirror, add an entry to both this table and `mirrors.json`:
   "name": "Your Organization Name",
   "github": "your-org/trace-registry-mirror",
   "clone_url": "https://github.com/your-org/trace-registry-mirror.git",
-  "head_api": "https://api.github.com/repos/your-org/trace-registry-mirror/commits/HEAD",
+  "head_api": "https://api.github.com/repos/your-org/trace-registry-mirror/commits/main",
   "contact": "your-security-contact@example.com"
 }
 ```
