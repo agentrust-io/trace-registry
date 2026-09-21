@@ -4,6 +4,8 @@
 
 # TRACE Registry
 
+Community updates and contributor highlights: [AgenTrust on LinkedIn](https://www.linkedin.com/company/agentrust-io/).
+
 The public accountability layer for TRACE claim anchors. Each entry records the
 Merkle root of a batch of signed TRACE Trust Records, committed to this
 repository as an append-only record. Git's commit history is the
