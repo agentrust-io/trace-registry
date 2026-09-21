@@ -1,0 +1,11 @@
+{
+  "producer_id": "bernstein/3.20.0",
+  "key_type": "Ed25519",
+  "public_key_jwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "ff3LjX7m5f7vj3YD5NS_LqtEzEa_wkD5ZnNPBpSD3o8"
+  },
+  "active_since": "2026-09-20T17:02:42Z",
+  "contact": "forte@bernstein.run"
+}
