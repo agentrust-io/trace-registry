@@ -36,6 +36,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install anchor runtime dependencies
+        run: pip install --require-hashes -r requirements/runtime.txt
+
       - name: Run batch anchor pipeline
         id: pipeline
         env:

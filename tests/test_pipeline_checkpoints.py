@@ -47,6 +47,20 @@ def _make_key() -> tuple[str, str]:
     return pem.decode("ascii"), key_id
 
 
+class ScheduledWorkflowContractTest(unittest.TestCase):
+    def test_anchor_workflow_installs_runtime_before_pipeline(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github/workflows/anchor-pipeline.yml"
+        ).read_text(encoding="utf-8")
+
+        install = "pip install --require-hashes -r requirements/runtime.txt"
+        invoke = "python tools/batch_anchor.py"
+
+        self.assertIn(install, workflow)
+        self.assertIn(invoke, workflow)
+        self.assertLess(workflow.index(install), workflow.index(invoke))
+
+
 class PipelineCheckpointTest(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
