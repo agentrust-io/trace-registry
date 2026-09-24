@@ -12,7 +12,29 @@ that includes the profile URI. Editing the string while keeping the signature wo
 produce a record that fails verification, which is a poor thing for a registry
 sample to be. It regenerates with the rest of the recorded corpus.
 
-Verify it with `agentrust-trace-tests` 0.3.x. Version 0.4.0 and later require v0.2.
+## Verify the historical sample offline
+
+From the repository root, install the verifier from this checkout and run:
+
+```bash
+python -m pip install .
+python -m trace_verify --claim samples/example-trust-record.json --proof samples/inclusion-proof.json --entry registry/2026/06/12.ndjson
+```
+
+Expected: exit code 0 and `OK: claim is included in batch '2026-06-12-001'`
+with `signature valid`. The command uses the local registry entry and producer
+key. It checks the historical inclusion proof and producer signature; it does
+not establish present-day freshness, current authorization or TRACE conformance.
+The sample and its signed bytes are unchanged.
+
+For historical conformance testing, the package is `agentrust-trace-tests`
+0.3.x and its executable is `trace-tests`. That is a separate check: the sample
+exceeds its default 24-hour freshness window. Increasing `--max-age` relaxes
+that policy for archival inspection; a resulting pass does not make this old
+record fresh. Version 0.4.0 and later require v0.2, so they cannot be used to
+claim conformance for this v0.1 sample. Use the offline recipe above to
+reproduce the registry's signature and inclusion result without changing a
+freshness policy.
 
 ## This sample is not anchorable through the pipeline
 
