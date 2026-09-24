@@ -738,15 +738,38 @@ class TestChainSubcommand(unittest.TestCase):
                 code = self._run([str(path)])
         self.assertEqual(code, 1)
 
-    def test_entries_without_a_checkpoint_are_not_a_failure(self):
+    def test_entries_without_a_checkpoint_do_not_report_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "none.ndjson"
             path.write_text(json.dumps({"batch_id": "x"}) + "\n", encoding="utf-8")
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = self._run([str(path)])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
+        self.assertIn("NOT VERIFIED", buf.getvalue())
         self.assertIn("nothing to verify", buf.getvalue())
+
+    def test_zero_checkpoint_json_distinguishes_absence_from_integrity_errors(self):
+        for content in ("", json.dumps({"batch_id": "x"}) + "\n"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "none.ndjson"
+                path.write_text(content, encoding="utf-8")
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = self._run([str(path), "--json"])
+                self.assertEqual(code, 1)
+                self.assertEqual(json.loads(buf.getvalue()), {
+                    "verified": False, "checkpoints": 0, "errors": [],
+                    "reason": "no_checkpoints",
+                })
+
+    def test_documented_old_entry_cannot_claim_chain_verification(self):
+        entry = str(REPO_ROOT / "registry" / "2026" / "06" / "12.ndjson")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = self._run([entry, "--json"])
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(buf.getvalue())["verified"])
 
 
 class TestPackagedWitnessVerifier(unittest.TestCase):

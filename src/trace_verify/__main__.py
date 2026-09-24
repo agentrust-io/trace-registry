@@ -426,10 +426,11 @@ def _main_chain(argv: list[str]) -> int:
     checkpointed = [e for e in entries if isinstance(e.get("mmr_checkpoint"), dict)]
     if not checkpointed:
         if args.as_json:
-            print(json.dumps({"verified": True, "checkpoints": 0, "errors": []}))
+            print(json.dumps({"verified": False, "checkpoints": 0, "errors": [],
+                              "reason": "no_checkpoints"}))
         else:
-            print("no entries with mmr_checkpoint found; nothing to verify")
-        return 0
+            print("NOT VERIFIED: no entries with mmr_checkpoint found; nothing to verify")
+        return 1
 
     checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
     _, chain_errors = verify_checkpoint_chain(checkpoints)

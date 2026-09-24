@@ -162,6 +162,12 @@ that was already anchored. See
 [docs/mmr-checkpoint.md](docs/mmr-checkpoint.md) for what each does and does not
 catch.
 
+If the supplied files contain no checkpoints, the command exits with code 1.
+JSON output reports `verified: false`, `checkpoints: 0`, and
+`reason: "no_checkpoints"`. The empty `errors` list means no integrity error was
+established; it does not mean verification succeeded. The June entry alone has
+no checkpoint, which is why the example above also includes the September file.
+
 **Does an outside witness agree?** Verifying a witness receipt needs COSE, so it
 ships as an extra rather than in the base install:
 
