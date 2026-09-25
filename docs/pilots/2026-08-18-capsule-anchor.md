@@ -59,6 +59,60 @@ leaf_index: 275
 errors: []
 ```
 
+### Pinned verification context
+
+The original run above is the August 18, 2026 pilot. Its authority-key resolution
+source was confirmed in [the follow-up review](https://github.com/agentrust-io/trace-registry/pull/41#issuecomment-5337468751):
+<https://anchor.agentactioncapsule.org/.well-known/did.json>.
+The same public key is preserved in the September 7
+[DID snapshot](../evidence/witness-2026-09-07/witness-did.json).
+A live URL alone does not preserve the key after rotation.
+
+An offline reproduction on September 25, 2026 (UTC), using `scitt-cose==0.1.1`
+and the pinned key below, returned the same root, leaf index and tree size.
+This reproduction accepts that operator key for this pilot; it does not establish
+organizational identity, current key status or a signed registration time.
+
+From the repository root, install `scitt-cose==0.1.1` in an isolated environment,
+then run this Python code. It reads the receipt already recorded above and makes
+no network requests:
+
+```python
+import base64
+import hashlib
+import json
+from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from scitt_cose import verify_receipt
+
+report = Path("docs/pilots/2026-08-18-capsule-anchor.md").read_text(encoding="utf-8")
+packet = json.loads(report.split("```json\n", 1)[1].split("```", 1)[0])
+key_bytes = bytes.fromhex(
+    "39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5"
+)
+assert hashlib.sha256(key_bytes).hexdigest()[:16] == "19a9ab3e02fad55c"
+key = Ed25519PublicKey.from_public_bytes(key_bytes).public_bytes(
+    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+)
+leaf = "a09f455ed68c50fed9291c3acd38c7e57800ae771815fc910658d96c9b6261a7"
+entry_hash = hashlib.sha256(bytes.fromhex(leaf)).hexdigest()
+assert entry_hash == packet["entry_hash"]
+result = verify_receipt(
+    base64.b64decode(packet["receipt_b64"], validate=True),
+    leaf_entry_hex=entry_hash,
+    log_public_key_pem=key,
+)
+assert result.ok, result.errors
+assert (result.leaf_index, result.tree_size) == (275, 276)
+assert result.root == "368ed5a1166aa4839a0b4566f227a5ee440da26bd3e5406715a3ac8a3198309d"
+print(result)
+```
+
+This checks the stored receipt against the recorded leaf digest. It does not
+recompute that leaf from the Trust Record or repeat the record-signature check.
+
 ## What this proves
 
 The receipt proves that the external log included the 32-byte value derived
@@ -73,7 +127,12 @@ producer, or make the external service part of TRACE governance.
 
 This pilot does not write the receipt into the signed record. Doing so after
 registration would change both the signature pre-image and the anchored leaf.
-The production profile needs a non-circular rule for the `transparency` claim,
-such as a stable predeclared receipt locator or a detached receipt supplied
-alongside the signed record. That rule must be specified before claiming the
-receipt is embedded end to end.
+For this pilot, keep the signed record unchanged and the receipt detached.
+The binding is the Anchor Format v1 leaf digest, recomputed from the complete
+signed record, followed by the service's `entry_hash` derivation above. A URI
+can help retrieve the receipt; the digest comparison and receipt verification
+establish the binding.
+
+This is the pilot's composition, not a new normative `transparency` profile.
+A production profile still needs to specify receipt discovery, trusted log keys
+and verification requirements before claiming an end-to-end integration.
