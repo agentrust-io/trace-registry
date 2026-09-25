@@ -60,7 +60,7 @@ def _load_entries(paths: list[Path]) -> list[dict]:
                 continue
             try:
                 entry = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (ValueError, RecursionError) as exc:
                 raise SystemExit(f"error: {path}:{lineno}: invalid JSON: {exc}")
             if not isinstance(entry, dict):
                 raise SystemExit(f"error: {path}:{lineno}: entry is not a JSON object")
@@ -88,8 +88,13 @@ def main(argv: list[str] | None = None) -> int:
         print("no entries with mmr_checkpoint found; nothing to verify")
         return 0
 
-    checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
-    chain_ok, chain_errors = verify_checkpoint_chain(checkpoints)
+    try:
+        checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
+    except ValueError as exc:
+        checkpoints = []
+        chain_errors = [f"malformed mmr_checkpoint: {exc}"]
+    else:
+        chain_ok, chain_errors = verify_checkpoint_chain(checkpoints)
     raw_errors = verify_against_raw_entries(entries)
 
     all_errors = chain_errors + raw_errors

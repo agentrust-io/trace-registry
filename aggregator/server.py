@@ -133,6 +133,12 @@ class AggregatorHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             self._send_json(400, {"error": str(exc)})
             return
+        except RecursionError:
+            # JSON nested deeper than the parser allows, in the body or in an
+            # as-transmitted claim string. It used to escape do_POST, so the
+            # handler thread died and the client got no response at all.
+            self._send_json(400, {"error": "JSON is nested too deeply to parse"})
+            return
 
         try:
             results = self.server.aggregator.submit(

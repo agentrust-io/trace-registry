@@ -365,15 +365,19 @@ class InclusionProof:
 
     @classmethod
     def from_dict(cls, d: dict) -> "InclusionProof":
-        return cls(
-            v=int(d["v"]),
-            kind=d["kind"],
-            size=int(d["size"]),
-            leaf_index=int(d["leaf_index"]),
-            witness=tuple(d["witness"]),
-            peaks_left=tuple(d["peaks_left"]),
-            peaks_right=tuple(d["peaks_right"]),
-        )
+        """Raises InvalidArgumentError on a missing or mistyped member."""
+        try:
+            return cls(
+                v=int(d["v"]),
+                kind=d["kind"],
+                size=int(d["size"]),
+                leaf_index=int(d["leaf_index"]),
+                witness=tuple(d["witness"]),
+                peaks_left=tuple(d["peaks_left"]),
+                peaks_right=tuple(d["peaks_right"]),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise InvalidArgumentError(f"malformed inclusion proof: {exc!r}") from exc
 
 
 def inclusion_proof(reader: NodeReader, leaf_index: int, size: int) -> InclusionProof:
@@ -504,15 +508,19 @@ class ConsistencyProof:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ConsistencyProof":
-        return cls(
-            v=int(d["v"]),
-            kind=d["kind"],
-            size_a=int(d["size_a"]),
-            size_b=int(d["size_b"]),
-            old_peaks=tuple(d["old_peaks"]),
-            witness=tuple(tuple(w) for w in d["witness"]),
-            new_peaks=tuple(d["new_peaks"]),
-        )
+        """Raises InvalidArgumentError on a missing or mistyped member."""
+        try:
+            return cls(
+                v=int(d["v"]),
+                kind=d["kind"],
+                size_a=int(d["size_a"]),
+                size_b=int(d["size_b"]),
+                old_peaks=tuple(d["old_peaks"]),
+                witness=tuple(tuple(w) for w in d["witness"]),
+                new_peaks=tuple(d["new_peaks"]),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise InvalidArgumentError(f"malformed consistency proof: {exc!r}") from exc
 
 
 def consistency_proof(reader: NodeReader, size_a: int, size_b: int) -> ConsistencyProof:

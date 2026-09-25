@@ -12,6 +12,18 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **Malformed input fails, it does not raise.** `CheckpointRecord.from_dict`
+  raises `ValueError` for a missing or mistyped member (it raised `KeyError`
+  or `TypeError`), and now refuses a boolean, float or numeric-string
+  integer. `verify_checkpoint_link` returns a failure for a non-string root
+  instead of raising `TypeError`. `InclusionProof.from_dict` and
+  `ConsistencyProof.from_dict` raise `InvalidArgumentError`. A non-string
+  `canonicalization_id` is an `UnknownCanonicalizationError`. `trace-verify`
+  exits 2 for a file that is not UTF-8 or is nested too deeply, and `chain`
+  reports a malformed checkpoint as a failure; both printed tracebacks. The
+  aggregator answers 400 to a body nested too deeply to parse, where the
+  handler thread died without a response. Found by the new ClusterFuzzLite
+  targets in `.clusterfuzzlite/`.
 - **Checkpoint key continuity.** `trace-verify chain` now fails a link whose
   `key_id` differs from the previous checkpoint's. Each checkpoint names its
   own key, so a chain that changed signers midway used to verify clean. The

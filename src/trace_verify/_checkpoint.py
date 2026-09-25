@@ -73,6 +73,30 @@ class RollbackError(RuntimeError):
     """A checkpoint is inconsistent with its claimed predecessor."""
 
 
+_INT_FIELDS = ("v", "mmr_size", "prev_size")
+_STR_FIELDS = ("kind", "log_id", "root", "prev_root", "key_id", "timestamp", "signature")
+_REQUIRED_FIELDS = ("v", "kind", "log_id", "mmr_size", "root", "prev_size",
+                    "key_id", "timestamp", "signature")
+
+
+def _field_type_problem(fields: dict) -> str | None:
+    """Name the first checkpoint field with the wrong JSON type, or None.
+
+    Integers must be JSON integers: not booleans (True == 1 in Python), not
+    floats and not numeric strings. The signing body re-serializes them, so a
+    "3" or a 3.0 would otherwise verify as the 3 that was signed.
+    """
+    for key in _INT_FIELDS:
+        value = fields.get(key)
+        if type(value) is not int:
+            return f"checkpoint {key} must be an integer, got {type(value).__name__}"
+    for key in _STR_FIELDS:
+        value = fields.get(key)
+        if not isinstance(value, str):
+            return f"checkpoint {key} must be a string, got {type(value).__name__}"
+    return None
+
+
 @dataclass
 class CheckpointRecord:
     """A signed snapshot of one log's MMR peak set at ``mmr_size``.
@@ -133,20 +157,30 @@ class CheckpointRecord:
 
     @classmethod
     def from_dict(cls, d: dict) -> "CheckpointRecord":
+        """Parse a checkpoint as published in a registry entry.
+
+        Raises ValueError for anything that is not a well-formed checkpoint:
+        a missing member, an integer member that is not a JSON integer, or a
+        string member that is not a string. It used to raise KeyError or
+        TypeError, and let a non-string root through to fail later in
+        verify_checkpoint_link, which documents that it never raises.
+        """
+        if not isinstance(d, dict):
+            raise ValueError("checkpoint is not a JSON object")
+        missing = [k for k in _REQUIRED_FIELDS if k not in d]
+        if missing:
+            raise ValueError(f"checkpoint is missing {', '.join(missing)}")
+        fields = {k: d[k] for k in _REQUIRED_FIELDS}
+        fields["prev_root"] = d.get("prev_root", "")
+        problem = _field_type_problem(fields)
+        if problem is not None:
+            raise ValueError(problem)
         cp = d.get("consistency_proof")
-        return cls(
-            v=int(d["v"]),
-            kind=d["kind"],
-            log_id=d["log_id"],
-            mmr_size=int(d["mmr_size"]),
-            root=d["root"],
-            prev_size=int(d["prev_size"]),
-            prev_root=d.get("prev_root", ""),
-            key_id=d["key_id"],
-            timestamp=d["timestamp"],
-            signature=d["signature"],
-            consistency_proof=_mmr.ConsistencyProof.from_dict(cp) if cp is not None else None,
-        )
+        if cp is not None:
+            if not isinstance(cp, dict):
+                raise ValueError("consistency_proof is not a JSON object")
+            cp = _mmr.ConsistencyProof.from_dict(cp)
+        return cls(**fields, consistency_proof=cp)
 
 
 def verify_checkpoint_signature_offline(cp: CheckpointRecord) -> bool:
@@ -190,6 +224,14 @@ def verify_checkpoint_link(prev: CheckpointRecord, curr: CheckpointRecord) -> tu
     fabricated proof fails that recomputation with overwhelming probability;
     it cannot be satisfied by copying field values alone.
     """
+    # A record built directly rather than through from_dict can carry any
+    # type. A non-string root used to reach bytes.fromhex and raise TypeError.
+    for name, record in (("prev", prev), ("curr", curr)):
+        problem = _field_type_problem(
+            {k: getattr(record, k, None) for k in _INT_FIELDS + _STR_FIELDS}
+        )
+        if problem is not None:
+            return False, f"malformed {name} checkpoint: {problem}"
     if curr.log_id != prev.log_id:
         return False, f"log_id mismatch: prev={prev.log_id!r} curr={curr.log_id!r}"
     # key_id is self-certifying: each checkpoint names the key that verifies
@@ -303,7 +345,10 @@ def verify_chain_against_entries(entries: list[dict]) -> list[str]:
     errors: list[str] = []
     store = _mmr.MemoryNodeStore()
 
-    for entry in entries:
+    for position, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(f"entry {position} is not a JSON object")
+            continue
         cp = entry.get(CHECKPOINT_KIND)
         if not isinstance(cp, dict):
             continue
@@ -317,7 +362,8 @@ def verify_chain_against_entries(entries: list[dict]) -> list[str]:
         claimed_root = cp.get("root")
         batch_id = entry.get("batch_id", "?")
 
-        if actual_size != claimed_size:
+        # type() rather than ==: True == 1, so a boolean size used to match.
+        if type(claimed_size) is not int or actual_size != claimed_size:
             errors.append(
                 f"batch_id={batch_id!r}: recomputed MMR size {actual_size} != "
                 f"checkpoint's claimed mmr_size {claimed_size!r} -- an entry was "

@@ -69,6 +69,13 @@ def canonical_claim_bytes(
     re-serialization. Passing ``as-transmitted`` without ``raw_bytes`` is a
     caller error (raises ``ValueError``), not a silent fallback.
     """
+    if not isinstance(canonicalization_id, str):
+        # The id is read from a registry entry. A JSON array or object there
+        # is unhashable and used to raise TypeError from the set lookup below.
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
