@@ -440,5 +440,128 @@ class JsonOutputOnSignatureFailureTest(unittest.TestCase):
         self.assertIn("error", result)
 
 
+class FetchRedirectAllowlistTest(unittest.TestCase):
+    """_fetch_url checked the allowlist on the URL it was given, then let
+    urllib follow any redirect: to http://, to 169.254.169.254, anywhere."""
+
+    ALLOWED = "https://raw.githubusercontent.com/agentrust-io/trace-registry/main/registry/2026/06/12.ndjson"
+
+    def _serve_redirect(self, location: str):
+        import email.message
+        import urllib.request
+        import urllib.response
+
+        from trace_verify import __main__ as tv
+        allowed = self.ALLOWED
+
+        def respond(req, code, loc=None):
+            headers = email.message.Message()
+            if loc:
+                headers["Location"] = loc
+            body = b"" if loc else b"fetched from the redirect target\n"
+            resp = urllib.response.addinfourl(io.BytesIO(body), headers, req.full_url, code)
+            resp.msg = "Found" if loc else "OK"
+            return resp
+
+        class FakeNetwork(urllib.request.BaseHandler):
+            # No socket opens: the allowlisted URL answers 302 to `location`,
+            # and anything else answers 200, so following the redirect is
+            # observable as a successful fetch. Ordered ahead of urllib's own
+            # HTTPS handler, which would otherwise answer first.
+            handler_order = 100
+
+            def https_open(self, req):
+                if req.full_url == allowed:
+                    return respond(req, 302, location)
+                return respond(req, 200)
+
+            def http_open(self, req):
+                return respond(req, 200)
+
+        handler = getattr(tv, "_AllowlistRedirectHandler", urllib.request.HTTPRedirectHandler)
+        opener = urllib.request.build_opener(FakeNetwork, handler)
+        return opener, tv
+
+    def test_redirect_off_the_allowlist_is_refused(self):
+        for target in ("http://raw.githubusercontent.com/x",
+                       "https://169.254.169.254/latest/meta-data/",
+                       "https://evil.example/registry.ndjson"):
+            opener, tv = self._serve_redirect(target)
+            with patch.object(tv, "_OPENER", opener, create=True), \
+                    patch("urllib.request.urlopen", opener.open):
+                with self.assertRaises(SystemExit) as ctx:
+                    tv._fetch_url(self.ALLOWED)
+            self.assertEqual(ctx.exception.code, 2, target)
+
+    def test_redirect_within_the_allowlist_is_followed(self):
+        from trace_verify import __main__ as tv
+        handler = tv._AllowlistRedirectHandler()
+        import urllib.request
+        req = urllib.request.Request(self.ALLOWED)
+        new = handler.redirect_request(
+            req, None, 301, "Moved", {},
+            "https://raw.githubusercontent.com/agentrust-io/renamed/main/x.ndjson")
+        self.assertIsNotNone(new)
+        self.assertEqual(new.full_url,
+                         "https://raw.githubusercontent.com/agentrust-io/renamed/main/x.ndjson")
+
+    def test_fetch_uses_the_allowlisting_opener(self):
+        from trace_verify import __main__ as tv
+        self.assertTrue(any(isinstance(h, tv._AllowlistRedirectHandler)
+                            for h in tv._OPENER.handlers))
+
+
+class AggregatorBodyLimitTest(unittest.TestCase):
+    """The server read Content-Length bytes with no cap, and a missing or
+    negative length fell through to rfile.read."""
+
+    def setUp(self):
+        import threading
+
+        from aggregator.server import AggregatorHTTPServer
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.agg = TRACEAggregator(
+            registry_dir=tmp / "registry", proofs_dir=tmp / "proofs",
+            flush_interval=0.2, git_commit=False, verify_signatures=False,
+            enable_mmr_checkpoints=False,
+        )
+        self.server = AggregatorHTTPServer(("127.0.0.1", 0), self.agg)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self._tmp.cleanup()
+
+    def _post(self, headers: dict, body: bytes = b"") -> int:
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+        for k, v in headers.items():
+            conn.putheader(k, v)
+        conn.endheaders()
+        if body:
+            conn.send(body)
+        status = conn.getresponse().status
+        conn.close()
+        return status
+
+    def test_over_limit_is_413_without_reading_the_body(self):
+        from aggregator import server
+        self.assertEqual(
+            self._post({"Content-Length": str(server.MAX_BODY_BYTES + 1)}), 413)
+
+    def test_missing_negative_and_malformed_lengths_are_400(self):
+        self.assertEqual(self._post({}), 400)
+        self.assertEqual(self._post({"Content-Length": "-1"}), 400)
+        self.assertEqual(self._post({"Content-Length": "abc"}), 400)
+
+    def test_a_body_inside_the_limit_is_still_accepted(self):
+        body = json.dumps({"claims": [{"producer": "p/1.0.0", "hash": "h"}]}).encode()
+        self.assertEqual(self._post({"Content-Length": str(len(body))}, body), 200)
+
+
 if __name__ == "__main__":
     unittest.main()

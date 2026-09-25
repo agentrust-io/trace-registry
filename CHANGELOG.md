@@ -36,6 +36,12 @@ Two different things are versioned here and they move independently:
   skipped the check.
 - `trace-verify --json` prints one JSON document when the signature does not
   verify; it printed two.
+- `trace-verify --entry-url` follows a redirect only to an allowlisted https
+  host. The allowlist was checked on the first URL only, and urllib followed
+  any redirect after it.
+- The aggregator server caps request bodies at 4 MiB (413) and answers a
+  missing, negative or malformed `Content-Length` with 400. A missing or
+  negative one used to block the handler thread.
 
 - **`trace-verify` 0.4.1: verifying a claim no longer needs a clone.**
   `--entry-url` fetched the registry entry and stopped there. The producer key
