@@ -1,0 +1,37 @@
+name: ClusterFuzzLite batch
+
+on:
+  schedule:
+    # 04:40 UTC daily, off the hour and clear of the other repositories'
+    # 04:20 batch runs.
+    - cron: '40 4 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: cflite-batch
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Batch fuzz
+    runs-on: ubuntu-latest
+    # Four targets share the budget, and the build takes a few minutes, so
+    # 30 minutes of fuzzing fits inside 45.
+    timeout-minutes: 45
+    steps:
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 1800
+          mode: batch
+          sanitizer: address

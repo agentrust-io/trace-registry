@@ -91,11 +91,14 @@ _OPENER = urllib.request.build_opener(_AllowlistRedirectHandler)
 
 
 def _load_json_file(path: Path) -> object:
+    # ValueError covers JSONDecodeError and UnicodeDecodeError. RecursionError
+    # is JSON nested deeper than the parser allows. Both used to escape as a
+    # traceback instead of the exit 2 this command documents for bad input.
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
         _die(f"cannot read {path}: {exc}")
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         _die(f"invalid JSON in {path}: {exc}")
 
 
@@ -108,6 +111,8 @@ def _fetch_url(url: str) -> str:
             return resp.read().decode("utf-8")
     except urllib.error.URLError as exc:
         _die(f"cannot fetch {url}: {exc}")
+    except UnicodeDecodeError as exc:
+        _die(f"{url} is not UTF-8: {exc}")
 
 
 def _load_entry(source: str, batch_id: str | None) -> dict:
@@ -118,7 +123,7 @@ def _load_entry(source: str, batch_id: str | None) -> dict:
         path = Path(source)
         try:
             raw = path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             _die(f"cannot read {source}: {exc}")
 
     lines = [ln for ln in raw.splitlines() if ln.strip()]
@@ -126,7 +131,7 @@ def _load_entry(source: str, batch_id: str | None) -> dict:
     for ln in lines:
         try:
             entries.append(json.loads(ln))
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             _die(f"invalid JSON line in entry source: {exc}")
 
     if batch_id is not None:
@@ -285,7 +290,7 @@ def _main_inclusion(argv: list[str] | None) -> int:
         claim = json.loads(claim_raw)
     except OSError as exc:
         _die(f"cannot read {claim_path}: {exc}")
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         _die(f"invalid JSON in {claim_path}: {exc}")
     proof = _load_json_file(Path(args.proof))
 
@@ -407,14 +412,14 @@ def _read_entries(names: list[str]) -> list[dict]:
         path = Path(name)
         try:
             raw = path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             _die(f"cannot read {path}: {exc}")
         for lineno, line in enumerate(raw.splitlines(), start=1):
             if not line.strip():
                 continue
             try:
                 entry = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (ValueError, RecursionError) as exc:
                 _die(f"{path}:{lineno}: invalid JSON: {exc}")
             if not isinstance(entry, dict):
                 _die(f"{path}:{lineno}: entry is not a JSON object")
@@ -456,8 +461,15 @@ def _main_chain(argv: list[str]) -> int:
             print("NOT VERIFIED: no entries with mmr_checkpoint found; nothing to verify")
         return 1
 
-    checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
-    _, chain_errors = verify_checkpoint_chain(checkpoints)
+    try:
+        checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
+    except ValueError as exc:
+        # A malformed checkpoint is a chain that does not verify, reported
+        # like any other break rather than as a KeyError traceback.
+        checkpoints = []
+        chain_errors = [f"malformed mmr_checkpoint: {exc}"]
+    else:
+        _, chain_errors = verify_checkpoint_chain(checkpoints)
     errors = chain_errors + verify_chain_against_entries(entries)
 
     if args.as_json:
