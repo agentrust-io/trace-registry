@@ -1,0 +1,49 @@
+name: CodeQL
+
+# No paths filter: every push to main and every pull request is analysed, so
+# no merged commit escapes SAST. The scheduled anchor commits carry [skip ci]
+# and only touch registry/, proofs/ and staging/ data.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1"  # Weekly on Monday at 03:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # Dependabot PRs run with a read-only token; the weekly run covers them.
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # actions: the workflows here hold the checkpoint signing secret and
+        # push to main, so workflow injection is in scope, not just Python.
+        language: [actions, python]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: /language:${{ matrix.language }}

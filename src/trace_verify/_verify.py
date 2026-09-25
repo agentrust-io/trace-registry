@@ -97,6 +97,66 @@ def canonical_claim_bytes(
     )
 
 
+SAFE_INTEGER_MAX = 2**53 - 1
+
+
+def loads_unique(raw: bytes | str) -> object:
+    """``json.loads`` that refuses duplicate member names.
+
+    Plain ``json.loads`` keeps the last value for a repeated name, so a claim
+    carrying ``"hash"`` twice was signature-checked over one value while its
+    transmitted bytes also carried the other, and a first-wins parser reads
+    the one the signature never covered. Raises ValueError on a duplicate.
+    """
+    def _unique(pairs: list[tuple[str, object]]) -> dict:
+        result: dict = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member name {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(raw, object_pairs_hook=_unique)
+
+
+def anchor_profile_violation(claim: object) -> str | None:
+    """Return why *claim* is outside the registry-anchor-v1 section 1 claim
+    profile, or None when it is inside it.
+
+    Section 1: a claim is a JSON object of strings, integers, booleans,
+    nulls, arrays and objects. Non-integer numbers and integers outside
+    -(2^53-1)..2^53-1 are excluded, because implementations of the sorted-key
+    construction in different languages serialize them differently. The walk
+    is iterative so a deeply nested claim cannot raise RecursionError here.
+    """
+    if not isinstance(claim, dict):
+        return "claim is not a JSON object"
+    stack: list[tuple[object, str]] = [(claim, "$")]
+    while stack:
+        value, where = stack.pop()
+        if value is None or isinstance(value, (bool, str)):
+            continue
+        if isinstance(value, int):
+            if not -SAFE_INTEGER_MAX <= value <= SAFE_INTEGER_MAX:
+                return (
+                    f"integer at {where} is outside the safe-integer range "
+                    f"-{SAFE_INTEGER_MAX}..{SAFE_INTEGER_MAX} "
+                    "(registry-anchor-v1 section 1)"
+                )
+        elif isinstance(value, float):
+            return (
+                f"non-integer number at {where}; the anchor claim profile "
+                "admits integers only (registry-anchor-v1 section 1)"
+            )
+        elif isinstance(value, dict):
+            stack.extend((v, f"{where}.{k}") for k, v in value.items())
+        elif isinstance(value, list):
+            stack.extend((v, f"{where}[{i}]") for i, v in enumerate(value))
+        else:
+            return f"unsupported value type {type(value).__name__} at {where}"
+    return None
+
+
 def decode_hash(value: object) -> bytes:
     """Decode a 'sha256:<64 lowercase hex>' string to 32 raw bytes."""
     if not isinstance(value, str) or not _HASH_RE.match(value):

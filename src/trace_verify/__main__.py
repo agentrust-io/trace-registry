@@ -68,6 +68,28 @@ def _check_url_allowed(url: str) -> str | None:
     return None
 
 
+class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only when its target passes the same allowlist.
+
+    urllib follows redirects by default, so checking only the URL we were
+    given let an allowlisted host send the fetch to http://, to a metadata
+    address, or anywhere else. A same-host redirect (a renamed repository on
+    raw.githubusercontent.com) still works.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        reason = _check_url_allowed(newurl)
+        if reason is not None:
+            raise urllib.error.HTTPError(
+                req.full_url, code,
+                f"refusing redirect to {newurl}: {reason}", headers, fp,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_AllowlistRedirectHandler)
+
+
 def _load_json_file(path: Path) -> object:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -82,7 +104,7 @@ def _fetch_url(url: str) -> str:
     if reason is not None:
         _die(f"refusing to fetch {url}: {reason}")
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310
+        with _OPENER.open(url, timeout=15) as resp:  # noqa: S310
             return resp.read().decode("utf-8")
     except urllib.error.URLError as exc:
         _die(f"cannot fetch {url}: {exc}")
@@ -358,6 +380,9 @@ def _main_inclusion(argv: list[str] | None) -> int:
             )
         if not sig_result:
             if args.as_json:
+                # One document only. Falling through to _output() printed a
+                # second JSON object, so `json.load` on stdout failed with
+                # "Extra data" exactly when the signature did not verify.
                 print(
                     json.dumps(
                         {
@@ -367,9 +392,8 @@ def _main_inclusion(argv: list[str] | None) -> int:
                         }
                     )
                 )
-            else:
-                _die(reason, code=1)
-            ok = False
+                return 1
+            _die(reason, code=1)
 
     _output(ok, entry, sig_result, args.as_json, canonicalization_id,
             key_source=key_source)

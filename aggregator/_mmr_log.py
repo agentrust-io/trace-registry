@@ -164,6 +164,15 @@ class CheckpointLog:
             self._nodes = core.MemoryNodeStore()
             self._signer = signer
             self._latest = replay_from_entries(self._nodes, replay_entries, log_id=log_id)
+            if self._latest is not None and self._latest.key_id != signer.key_id:
+                # A replaced or mistyped signing secret would otherwise extend
+                # the published chain under a new identity, silently.
+                raise ValueError(
+                    "the signing key does not match the published chain: last "
+                    f"checkpoint key_id={self._latest.key_id}, configured signer "
+                    f"key_id={signer.key_id}. Refusing to extend the chain under "
+                    "a different key."
+                )
             return
 
         if root_dir is None:
@@ -179,6 +188,12 @@ class CheckpointLog:
                 raise ValueError(
                     f"{latest_path} belongs to log_id={self._latest.log_id!r}, "
                     f"not {log_id!r} -- refusing to mix two logs' checkpoint chains"
+                )
+            if self._latest.key_id != self._signer.key_id:
+                raise ValueError(
+                    f"{latest_path} was signed by key_id={self._latest.key_id}, "
+                    f"not the configured signer key_id={self._signer.key_id} -- "
+                    "refusing to extend the chain under a different key"
                 )
 
     def append_entry(self, entry: dict, *, timestamp: str) -> CheckpointRecord:

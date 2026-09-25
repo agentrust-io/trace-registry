@@ -95,6 +95,21 @@ jobs:
       - name: Validate producer key files
         run: python tools/validate_producers.py
 
+      - name: Verify the whole checkpoint chain
+        # The smoke test above checks two fixed day files. This covers every
+        # day file, so a checkpoint the scheduled pipeline appended since is
+        # verified too, key continuity included.
+        run: |
+          set -euo pipefail
+          trace-verify chain registry/*/*/*.ndjson
+
+      - name: Dry-run staged records through the anchor pipeline
+        # A staged record the pipeline rejects (unregistered producer, bad
+        # signature) fails every scheduled run until someone removes it, and
+        # blocks every other producer's batch with it. Run the same checks
+        # here so such a record fails its pull request instead of main.
+        run: python tools/batch_anchor.py --dry-run
+
       - name: Run tool tests
         run: python -m unittest discover -s tests -v
 

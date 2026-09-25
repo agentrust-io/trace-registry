@@ -29,8 +29,20 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aggregator._core import TRACEAggregator
+from trace_verify._verify import loads_unique
 
 _PROOF_PATH = re.compile(r"^/proof/([A-Za-z0-9._:-]+)/(\d+)$")
+
+# The largest claim anchored so far is under 2 KB, so 4 MiB leaves room for
+# batches of a couple of thousand claims while bounding what one request can
+# make the server buffer.
+MAX_BODY_BYTES = 4 * 1024 * 1024
+
+
+class _BodyError(Exception):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class AggregatorHandler(BaseHTTPRequestHandler):
@@ -48,10 +60,23 @@ class AggregatorHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _read_json_body(self) -> object:
-        length = int(self.headers.get("Content-Length", 0))
+        # Checked before any read. The length used to go straight to
+        # rfile.read: no cap, and a missing or negative one blocked the
+        # handler thread until the client closed the connection.
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            raise _BodyError(400, "Content-Length is required")
+        try:
+            length = int(raw_length)
+        except ValueError:
+            raise _BodyError(400, "Content-Length is not an integer") from None
+        if length < 0:
+            raise _BodyError(400, "Content-Length is negative")
+        if length > MAX_BODY_BYTES:
+            raise _BodyError(413, f"body exceeds {MAX_BODY_BYTES} bytes")
         if length == 0:
             return None
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        return loads_unique(self.rfile.read(length).decode("utf-8"))
 
     def do_POST(self):
         if self.path != "/batch":
@@ -81,7 +106,7 @@ class AggregatorHandler(BaseHTTPRequestHandler):
                             "'as-transmitted'"
                         )
                     rb = item.encode("utf-8")
-                    parsed = json.loads(item)
+                    parsed = loads_unique(item)
                     if not isinstance(parsed, dict):
                         raise ValueError("claim must be a JSON object")
                     if producer and "producer" not in parsed:
@@ -102,6 +127,9 @@ class AggregatorHandler(BaseHTTPRequestHandler):
                     f"unsupported canonicalization_id {canonicalization_id!r}; "
                     "expected 'sorted-key' or 'as-transmitted'"
                 )
+        except _BodyError as exc:
+            self._send_json(exc.status, {"error": str(exc)})
+            return
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             self._send_json(400, {"error": str(exc)})
             return

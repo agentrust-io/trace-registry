@@ -225,6 +225,15 @@ class TRACEAggregator:
                     "raw_bytes entry per claim -- there is nothing to "
                     "re-serialize at this layer, by design"
                 )
+        from trace_verify._verify import anchor_profile_violation
+
+        for claim in claims:
+            # registry-anchor-v1 section 1 excludes floats and integers
+            # outside the safe range from a claim; anchoring one produces a
+            # leaf the conformance suite refuses.
+            violation = anchor_profile_violation(claim)
+            if violation is not None:
+                raise ValueError(violation)
         job_ids = [uuid.uuid4().hex for _ in claims]
         with self._cond:
             for i, (jid, claim) in enumerate(zip(job_ids, claims)):
@@ -269,7 +278,23 @@ class TRACEAggregator:
                 batch = list(self._pending)
                 self._pending.clear()
 
-            completed, proof_index = self._anchor_batch(batch)
+            try:
+                completed, proof_index = self._anchor_batch(batch)
+            except Exception as exc:  # noqa: BLE001 - reported to every waiter
+                # An exception escaping here used to end this thread, leaving
+                # every waiting and future submit() to time out. Fail the
+                # jobs in this batch by name instead and keep flushing. Some
+                # groups may have been written before the failure, so the
+                # reason says the outcome is unknown rather than "not anchored".
+                reason = (
+                    "anchoring failed partway through this flush; check the "
+                    f"registry before resubmitting: {type(exc).__name__}: {exc}"
+                )
+                completed = {
+                    jid: {"rejected": True, "reason": reason}
+                    for jid, _, _, _ in batch
+                }
+                proof_index = {}
 
             with self._cond:
                 self._completed.update(completed)
@@ -300,6 +325,14 @@ class TRACEAggregator:
         groups: dict[tuple[str, str], list[tuple[str, dict, bytes | None]]] = {}
         for jid, claim, canon_id, raw in batch:
             producer = claim.get("producer", "__unknown__")
+            if not isinstance(producer, str):
+                # An array or object here is unhashable. It used to raise
+                # TypeError out of this method and kill the flush thread, so
+                # one request stalled every later submit until a restart.
+                completed[jid] = {"rejected": True,
+                                  "reason": "claim's top-level 'producer' is not a string",
+                                  "producer": None}
+                continue
             groups.setdefault((producer, canon_id), []).append((jid, claim, raw))
 
         for (producer, canon_id), group in groups.items():

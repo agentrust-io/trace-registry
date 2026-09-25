@@ -239,7 +239,7 @@ class TestCLIWithFiles(unittest.TestCase):
             mock_resp.__exit__ = MagicMock(return_value=False)
             mock_resp.read.return_value = fake_content
 
-            with patch("urllib.request.urlopen", return_value=mock_resp):
+            with patch("trace_verify.__main__._OPENER.open", return_value=mock_resp):
                 rc = self._run(
                     "--claim", str(self._write(tmp, "claim.json", claim)),
                     "--proof", str(self._write(tmp, "proof.json", proof)),

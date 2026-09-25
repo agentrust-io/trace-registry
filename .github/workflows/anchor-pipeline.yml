@@ -87,6 +87,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify the checkpoint chain before committing (fail closed)
+        # Anchor commits carry [skip ci], so nothing else checks what this job
+        # appends before it is public. Recompute the whole chain from the raw
+        # entries, key continuity included, and refuse to commit on any error.
+        if: steps.pipeline.outputs.anchored_count != '0'
+        run: python tools/verify_checkpoint_chain.py registry/*/*/*.ndjson
+
       - name: Install and configure gitsign (keyless commit signing)
         if: steps.pipeline.outputs.anchored_count != '0'
         env:

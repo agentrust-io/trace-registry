@@ -192,6 +192,16 @@ def verify_checkpoint_link(prev: CheckpointRecord, curr: CheckpointRecord) -> tu
     """
     if curr.log_id != prev.log_id:
         return False, f"log_id mismatch: prev={prev.log_id!r} curr={curr.log_id!r}"
+    # key_id is self-certifying: each checkpoint names the key that verifies
+    # it. Without this comparison a chain could switch signers at any link
+    # and every signature would still check out, each against its own key.
+    # This format defines no rotation statement, so a change is a break.
+    if curr.key_id != prev.key_id:
+        return False, (
+            f"key_id changed: prev.key_id={prev.key_id!r} curr.key_id="
+            f"{curr.key_id!r} -- this chain format has no key rotation, so a "
+            "different signer is not a continuation of this chain"
+        )
     if curr.mmr_size <= prev.mmr_size:
         return False, (
             f"non-monotonic mmr_size: prev.mmr_size={prev.mmr_size} "
