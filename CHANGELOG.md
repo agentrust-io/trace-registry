@@ -12,6 +12,31 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **Checkpoint key continuity.** `trace-verify chain` now fails a link whose
+  `key_id` differs from the previous checkpoint's. Each checkpoint names its
+  own key, so a chain that changed signers midway used to verify clean. The
+  pipeline also refuses to extend a published chain when the configured
+  signing key is not the one that signed the last checkpoint.
+- **Claim profile at intake.** The pipeline, the aggregator and
+  `tools/anchor.py` now refuse a claim that registry-anchor-v1 section 1
+  excludes: a non-integer number, or an integer outside
+  -(2^53-1)..2^53-1. They anchored these before, producing leaves the
+  conformance suite rejects. A claim with a duplicate member name is refused
+  too: `json.loads` kept the last value, so the signature covered one value
+  while the transmitted bytes carried both. Every claim already anchored is
+  inside the profile.
+- **Intake.** A staged record whose `producer` is an array or object is
+  rejected by name. It used to raise `TypeError` and abort the scheduled run
+  for every producer; in the aggregator it killed the flush thread, so every
+  later submit timed out. CI now dry-runs staged records, so a record the
+  pipeline would reject fails its pull request instead of main.
+- **Append-only gate.** `tools/check_append_only.py` diffs with `--no-renames`
+  and fails when the base SHA does not resolve. A renamed day file used to be
+  reported under its new name only, and an unresolvable base (a force-push)
+  skipped the check.
+- `trace-verify --json` prints one JSON document when the signature does not
+  verify; it printed two.
+
 - **`trace-verify` 0.4.1: verifying a claim no longer needs a clone.**
   `--entry-url` fetched the registry entry and stopped there. The producer key
   still had to be on disk, so a reader without a clone got

@@ -205,13 +205,22 @@ def make_entry(
 
 
 def _load_claim(path: Path) -> tuple[dict, bytes]:
+    # The profile rules live in the trace_verify package so the pipeline,
+    # the aggregator and this tool refuse exactly the same claims.
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    from trace_verify._verify import anchor_profile_violation, loads_unique
+
     try:
         raw = path.read_bytes()
-        claim = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
+        claim = loads_unique(raw)
+    except (OSError, ValueError, RecursionError) as exc:
         raise SystemExit(f"error: cannot read claim {path}: {exc}")
     if not isinstance(claim, dict):
         raise SystemExit(f"error: claim {path} is not a JSON object")
+    violation = anchor_profile_violation(claim)
+    if violation is not None:
+        raise SystemExit(f"error: claim {path} cannot be anchored: {violation}")
     return claim, raw
 
 

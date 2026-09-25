@@ -144,27 +144,60 @@ def _build_tree(leaves: list[bytes]) -> tuple[bytes, list[list[str]]]:
 # Staging helpers
 # ---------------------------------------------------------------------------
 
-def scan_staging(incoming_dir: Path) -> list[tuple[Path, dict, bytes]]:
-    """Return (path, claim, raw_bytes) triples for all valid JSON files in incoming_dir."""
+def scan_staging_with_rejections(
+    incoming_dir: Path,
+) -> tuple[list[tuple[Path, dict, bytes]], list[tuple[Path, str]]]:
+    """Return (records, rejections) for the JSON files in incoming_dir.
+
+    records are (path, claim, raw_bytes) triples. rejections are (path,
+    reason) pairs for files that parse but can never be anchored: duplicate
+    member names, a claim outside the registry-anchor-v1 section 1 profile,
+    or nesting too deep to parse. Unreadable, malformed and non-object files
+    are skipped with a warning, as before.
+    """
+    from trace_verify._verify import anchor_profile_violation, loads_unique
+
     records: list[tuple[Path, dict, bytes]] = []
+    rejections: list[tuple[Path, str]] = []
     for path in sorted(incoming_dir.glob("*.json")):
         try:
             raw = path.read_bytes()
-            claim = json.loads(raw)
+            claim = loads_unique(raw)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"warning: skipping {path.name}: {exc}", file=sys.stderr)
+            continue
+        except ValueError as exc:  # duplicate member name
+            rejections.append((path, str(exc)))
+            continue
+        except RecursionError:
+            # Not a JSONDecodeError, so it used to escape this loop and abort
+            # the run for every producer.
+            rejections.append((path, "claim is nested too deeply to parse"))
             continue
         if not isinstance(claim, dict):
             print(f"warning: skipping {path.name}: not a JSON object", file=sys.stderr)
             continue
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            rejections.append((path, violation))
+            continue
         records.append((path, claim, raw))
-    return records
+    return records, rejections
+
+
+def scan_staging(incoming_dir: Path) -> list[tuple[Path, dict, bytes]]:
+    """Return (path, claim, raw_bytes) triples for the anchorable files in incoming_dir."""
+    return scan_staging_with_rejections(incoming_dir)[0]
 
 
 # Sentinel for claims that carry no top-level 'producer'. Deliberately not a
 # valid producer id (schema/producer-key.schema.json), so it can never resolve
 # to a key file even if the rejection below were ever removed.
 UNKNOWN_PRODUCER = "__unknown__"
+# Sentinel for claims whose 'producer' is present but not a JSON string. The
+# raw value cannot be a grouping key: a list or object is unhashable and used
+# to raise TypeError here, aborting the run for every producer.
+INVALID_PRODUCER = "__invalid__"
 
 
 def group_by_producer(
@@ -180,6 +213,8 @@ def group_by_producer(
     groups: dict[str, list[tuple[Path, dict, bytes]]] = {}
     for path, claim, raw in records:
         producer = claim.get("producer", UNKNOWN_PRODUCER)
+        if not isinstance(producer, str):
+            producer = INVALID_PRODUCER
         groups.setdefault(producer, []).append((path, claim, raw))
     if max_batch > 0:
         groups = {p: items[:max_batch] for p, items in groups.items()}
@@ -451,9 +486,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     ts = args.ts or _now_ts()
-    records = scan_staging(incoming_dir)
+    records, intake_rejections = scan_staging_with_rejections(incoming_dir)
 
-    if not records:
+    if not records and not intake_rejections:
         msg = "no pending records in staging/incoming"
         if args.as_json:
             print(json.dumps({"status": "nothing_to_anchor", "ts": ts}))
@@ -483,6 +518,17 @@ def main(argv: list[str] | None = None) -> int:
     results = []
     failures = 0
 
+    for path, reason in intake_rejections:
+        results.append({
+            "status": "rejected",
+            "producer": None,
+            "file": path.name,
+            "detail": reason,
+        })
+        failures += 1
+        if not args.as_json:
+            print(f"REJECT {path.name}: {reason}", file=sys.stderr)
+
     for producer, group_records in groups.items():
         claims = [c for _, c, _ in group_records]
         b_id = batch_id_for(claims)
@@ -509,6 +555,22 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             if not args.as_json:
                 print(f"REJECT {names}: no top-level 'producer' field", file=sys.stderr)
+            results.append(result)
+            continue
+
+        if producer == INVALID_PRODUCER:
+            # Rejected whether or not signatures are verified: the value is
+            # written into the registry entry, which requires a string.
+            names = ", ".join(sorted(p.name for p, _, _ in group_records))
+            result = {
+                "status": "rejected",
+                "producer": producer,
+                "batch_id": b_id,
+                "detail": "claim's top-level 'producer' is not a string: " + names,
+            }
+            failures += 1
+            if not args.as_json:
+                print(f"REJECT {names}: 'producer' is not a string", file=sys.stderr)
             results.append(result)
             continue
 

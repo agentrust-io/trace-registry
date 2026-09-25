@@ -358,6 +358,9 @@ def _main_inclusion(argv: list[str] | None) -> int:
             )
         if not sig_result:
             if args.as_json:
+                # One document only. Falling through to _output() printed a
+                # second JSON object, so `json.load` on stdout failed with
+                # "Extra data" exactly when the signature did not verify.
                 print(
                     json.dumps(
                         {
@@ -367,9 +370,8 @@ def _main_inclusion(argv: list[str] | None) -> int:
                         }
                     )
                 )
-            else:
-                _die(reason, code=1)
-            ok = False
+                return 1
+            _die(reason, code=1)
 
     _output(ok, entry, sig_result, args.as_json, canonicalization_id,
             key_source=key_source)

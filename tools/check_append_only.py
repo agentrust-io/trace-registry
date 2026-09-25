@@ -36,14 +36,27 @@ def main(argv: list[str] | None = None) -> int:
 
     base_sha = argv[0]
 
-    # Verify the base SHA resolves (guard against empty string or bad ref).
-    check = git("rev-parse", "--verify", base_sha)
+    # The base must resolve. An unresolvable one is not a reason to skip: a
+    # force-push to main leaves the push event's `before` SHA unreachable from
+    # the new history, which is the rewrite this check exists to catch.
+    check = git("rev-parse", "--verify", f"{base_sha}^{{commit}}")
     if check.returncode != 0:
-        print(f"cannot resolve base SHA {base_sha!r} -- skipping append-only check")
-        return 0
+        print(
+            f"ERROR: cannot resolve base SHA {base_sha!r}; refusing to pass the "
+            "append-only check without a base to compare against"
+        )
+        return 1
 
-    # List .ndjson files that differ between base and HEAD.
-    diff = git("diff", "--name-only", base_sha, "HEAD", "--", "registry/")
+    # List .ndjson files that differ between base and HEAD. --no-renames
+    # matters: with rename detection on (git's default), a moved day file is
+    # reported under its NEW name only, so moving registry/.../12.ndjson to a
+    # non-.ndjson name dropped it from this list and from validation, and
+    # moving it to another .ndjson name read as a brand-new file whose edited
+    # content was never compared with what had been published.
+    diff = git("diff", "--no-renames", "--name-only", base_sha, "HEAD", "--", "registry/")
+    if diff.returncode != 0:
+        print(f"ERROR: git diff against {base_sha!r} failed: {diff.stderr.strip()}")
+        return 1
     changed = [f for f in diff.stdout.splitlines() if f.endswith(".ndjson")]
 
     if not changed:

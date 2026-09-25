@@ -29,6 +29,7 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from aggregator._core import TRACEAggregator
+from trace_verify._verify import loads_unique
 
 _PROOF_PATH = re.compile(r"^/proof/([A-Za-z0-9._:-]+)/(\d+)$")
 
@@ -51,7 +52,7 @@ class AggregatorHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
             return None
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        return loads_unique(self.rfile.read(length).decode("utf-8"))
 
     def do_POST(self):
         if self.path != "/batch":
@@ -81,7 +82,7 @@ class AggregatorHandler(BaseHTTPRequestHandler):
                             "'as-transmitted'"
                         )
                     rb = item.encode("utf-8")
-                    parsed = json.loads(item)
+                    parsed = loads_unique(item)
                     if not isinstance(parsed, dict):
                         raise ValueError("claim must be a JSON object")
                     if producer and "producer" not in parsed:

@@ -115,7 +115,12 @@ catches:
 - a **forked chain** (two checkpoints claiming the same `prev_size` with
   different `prev_root`, or a `prev_size` that never existed);
 - a **non-monotonic or cross-log** checkpoint (wrong `log_id`, or `mmr_size`
-  that does not strictly increase).
+  that does not strictly increase);
+- a **change of signer** mid-chain (`key_id` differs from the previous
+  checkpoint's). The format has no rotation statement, so a new key is a
+  break, not a continuation. Whether the one key is the registry's is still
+  the out-of-band question above: pin it (`trace-verify receipt
+  --registry-key`, or compare `key_id` yourself).
 
 It does **not**, by itself, catch a quiet post-hoc edit to an
 already-checkpointed entry's own content that leaves every checkpoint's

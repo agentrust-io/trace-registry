@@ -194,6 +194,14 @@ def verify_claim_against_registry(
         ok = verify_claim_signature(claim, jwk)
     except (ImportError, ValueError) as exc:
         return False, f"signature check failed for {producer_id!r}: {exc}"
+    except RecursionError:
+        # The JCS pre-image recurses per nesting level. A claim nested deeper
+        # than the interpreter allows is not verifiable, which is a rejection,
+        # not an exception for the anchoring loop to die on.
+        return False, (
+            f"signature check failed for {producer_id!r}: claim is nested too "
+            "deeply to canonicalize"
+        )
 
     if not ok:
         return False, f"signature does not verify for producer {producer_id!r}"
