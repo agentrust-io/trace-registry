@@ -9,6 +9,8 @@ Thank you for your interest in contributing to the TRACE Registry.
 3. Commit your changes using [Conventional Commits](https://www.conventionalcommits.org)
 4. Open a pull request against `main`
 
+A pull request that adds or changes behaviour must add or update tests in `tests/` that fail without it. CI runs `python -m unittest discover -s tests` and `ruff check .`; both must pass before merge.
+
 ## Becoming a TRACE Producer
 
 A producer is any system that generates signed TRACE Trust Records and anchors them into the registry. To register your key:

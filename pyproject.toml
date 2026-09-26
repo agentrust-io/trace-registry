@@ -60,3 +60,7 @@ Changelog = "https://github.com/agentrust-io/trace-registry/blob/main/CHANGELOG.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trace_verify"]
+
+[tool.ruff.lint]
+# Blocking in CI (ci.yml "Lint (ruff)"): syntax errors and pyflakes.
+select = ["E9", "F"]

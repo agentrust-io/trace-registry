@@ -3,3 +3,4 @@
 #     --python-version 3.12 -o requirements/ci.txt
 jsonschema==4.26.0
 hatchling
+ruff

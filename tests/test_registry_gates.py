@@ -277,7 +277,6 @@ class TestCheckAppendOnlyEndToEnd(unittest.TestCase):
             self._git(repo, "add", "registry/")
             self._git(repo, "commit", "-m", "append second entry")
 
-            new_sha = self._git(repo, "rev-parse", "HEAD").stdout.strip()
             exit_code = self._run_check(repo, base_sha)
             self.assertEqual(exit_code, 0, "a pure append must be accepted")
 

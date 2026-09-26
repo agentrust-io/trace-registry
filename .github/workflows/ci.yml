@@ -24,6 +24,11 @@ jobs:
       - name: Install dependencies
         run: pip install --require-hashes -r requirements/ci.txt
 
+      - name: Lint (ruff)
+        # Syntax errors and pyflakes (undefined names, unused imports and
+        # variables). The rule set lives in pyproject.toml [tool.ruff.lint].
+        run: ruff check .
+
       - name: Install offline witness verification dependencies
         run: pip install --require-hashes -r requirements/witness.txt
 
