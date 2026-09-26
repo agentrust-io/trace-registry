@@ -36,7 +36,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from trace_verify import _mmr as core
 from trace_verify._checkpoint import CheckpointRecord, verify_checkpoint_chain, verify_checkpoint_link
-from aggregator._mmr_log import CheckpointLog
 from aggregator._core import TRACEAggregator
 import verify_checkpoint_chain as verifier_tool
 
