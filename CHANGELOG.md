@@ -12,6 +12,8 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+## [0.4.2] - 2026-09-26
+
 - **Malformed input fails, it does not raise.** `CheckpointRecord.from_dict`
   raises `ValueError` for a missing or mistyped member (it raised `KeyError`
   or `TypeError`), and now refuses a boolean, float or numeric-string
@@ -24,11 +26,15 @@ Two different things are versioned here and they move independently:
   aggregator answers 400 to a body nested too deeply to parse, where the
   handler thread died without a response. Found by the new ClusterFuzzLite
   targets in `.clusterfuzzlite/`.
-- **Checkpoint key continuity.** `trace-verify chain` now fails a link whose
-  `key_id` differs from the previous checkpoint's. Each checkpoint names its
-  own key, so a chain that changed signers midway used to verify clean. The
-  pipeline also refuses to extend a published chain when the configured
-  signing key is not the one that signed the last checkpoint.
+- **Checkpoint key continuity. Key rotation is now refused.**
+  `trace-verify chain` fails a link whose `key_id` differs from the previous
+  checkpoint's. Each checkpoint names its own key, so a chain that changed
+  signers midway used to verify clean. The chain format has no rotation
+  statement, so a checkpoint signed by a new key is a break, not a
+  continuation: there is no supported way to rotate the checkpoint key and
+  keep the chain verifying. The pipeline also refuses to extend a published
+  chain when the configured signing key is not the one that signed the last
+  checkpoint.
 - **Claim profile at intake.** The pipeline, the aggregator and
   `tools/anchor.py` now refuse a claim that registry-anchor-v1 section 1
   excludes: a non-integer number, or an integer outside
@@ -54,6 +60,20 @@ Two different things are versioned here and they move independently:
 - The aggregator server caps request bodies at 4 MiB (413) and answers a
   missing, negative or malformed `Content-Length` with 400. A missing or
   negative one used to block the handler thread.
+- **`trace-verify chain` with no checkpoints exits 1** (#88). It exited 0
+  and, with `--json`, reported `verified: true` for input that contained no
+  checkpoint at all. It now prints `NOT VERIFIED`, and `--json` reports
+  `verified: false`, `checkpoints: 0`, `reason: "no_checkpoints"`.
+- `tools/capture_witness_receipt.py --registry-entry` lifts the
+  `mmr_checkpoint` out of a registry entry file, with `--batch-id` to pick
+  one from a multi-line file (#78). Sending the whole entry made the witness
+  register a digest over the wrong object.
+- Repository only, nothing shipped: ruff runs in CI (#96), workflow write
+  permissions are scoped to the job that uses them (#95), the anchor pipeline
+  installs its runtime dependencies (#89), and the maintainer approval check
+  matches repository access (#92).
+
+## Earlier releases (0.3.1 to 0.4.1)
 
 - **`trace-verify` 0.4.1: verifying a claim no longer needs a clone.**
   `--entry-url` fetched the registry entry and stopped there. The producer key
