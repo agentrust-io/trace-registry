@@ -21,12 +21,14 @@ concurrency:
   cancel-in-progress: false  # queue rather than cancel; registry must stay consistent
 
 permissions:
-  contents: write  # needed to push the commit
-  id-token: write  # needed for keyless (Sigstore gitsign) commit signing
+  contents: read
 
 jobs:
   anchor:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to push the commit
+      id-token: write  # needed for keyless (Sigstore gitsign) commit signing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
