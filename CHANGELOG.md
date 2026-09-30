@@ -12,6 +12,14 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+## [0.4.3] - 2026-09-30
+
+- **Duplicate JSON members are refused.** The `trace-verify` CLI parsed the
+  claim, proof, receipt and entry files with last-wins `json.loads`, so a claim
+  carrying a member twice verified over one value while a first-wins reader of
+  the same file saw the other. It now uses `loads_unique` at all four parse
+  sites and exits 2 with `duplicate JSON member name` (#104).
+
 ## [0.4.2] - 2026-09-26
 
 - **Malformed input fails, it does not raise.** `CheckpointRecord.from_dict`
