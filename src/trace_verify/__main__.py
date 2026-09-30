@@ -46,7 +46,12 @@ import urllib.request
 from pathlib import Path
 
 from trace_verify import __version__
-from trace_verify._verify import VINTAGE_CANONICALIZATION, decode_hash, verify_inclusion
+from trace_verify._verify import (
+    VINTAGE_CANONICALIZATION,
+    decode_hash,
+    loads_unique,
+    verify_inclusion,
+)
 
 # SSRF guard: only fetch registry entries over https from known registry hosts.
 # This blocks file://, http://, and internal/metadata targets such as
@@ -95,7 +100,7 @@ def _load_json_file(path: Path) -> object:
     # is JSON nested deeper than the parser allows. Both used to escape as a
     # traceback instead of the exit 2 this command documents for bad input.
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return loads_unique(path.read_text(encoding="utf-8"))
     except OSError as exc:
         _die(f"cannot read {path}: {exc}")
     except (ValueError, RecursionError) as exc:
@@ -130,7 +135,7 @@ def _load_entry(source: str, batch_id: str | None) -> dict:
     entries = []
     for ln in lines:
         try:
-            entries.append(json.loads(ln))
+            entries.append(loads_unique(ln))
         except (ValueError, RecursionError) as exc:
             _die(f"invalid JSON line in entry source: {exc}")
 
@@ -287,7 +292,7 @@ def _main_inclusion(argv: list[str] | None) -> int:
     claim_path = Path(args.claim)
     try:
         claim_raw = claim_path.read_bytes()
-        claim = json.loads(claim_raw)
+        claim = loads_unique(claim_raw)
     except OSError as exc:
         _die(f"cannot read {claim_path}: {exc}")
     except (ValueError, RecursionError) as exc:
@@ -418,7 +423,7 @@ def _read_entries(names: list[str]) -> list[dict]:
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
+                entry = loads_unique(line)
             except (ValueError, RecursionError) as exc:
                 _die(f"{path}:{lineno}: invalid JSON: {exc}")
             if not isinstance(entry, dict):
