@@ -119,8 +119,12 @@ catches:
 - a **change of signer** mid-chain (`key_id` differs from the previous
   checkpoint's). The format has no rotation statement, so a new key is a
   break, not a continuation. Whether the one key is the registry's is still
-  the out-of-band question above: pin it (`trace-verify receipt
-  --registry-key`, or compare `key_id` yourself).
+  the out-of-band question above: pin it with `trace-verify chain
+  --registry-key HEX` or `trace-verify receipt --registry-key HEX`.
+  Obtain that key independently of the entries being verified. Without a pin,
+  `chain` reports the signer as `key_id` in both text and `--json` output so
+  you can compare it yourself; a self-consistent chain alone does not establish
+  that its signer is the registry you trust.
 
 It does **not**, by itself, catch a quiet post-hoc edit to an
 already-checkpointed entry's own content that leaves every checkpoint's

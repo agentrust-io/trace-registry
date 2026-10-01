@@ -448,7 +448,19 @@ def _main_chain(argv: list[str]) -> int:
                    help="registry .ndjson file(s), in registry order")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="emit a machine-readable JSON result instead of plain text")
+    p.add_argument("--registry-key", metavar="HEX",
+                   help="independently accepted raw Ed25519 registry key, hex")
     args = p.parse_args(argv)
+
+    registry_key = None
+    if args.registry_key is not None:
+        try:
+            raw_key = bytes.fromhex(args.registry_key)
+        except ValueError:
+            p.error("--registry-key must be a 32-byte Ed25519 public key in hex")
+        if len(raw_key) != 32 or len(args.registry_key) != 64:
+            p.error("--registry-key must be a 32-byte Ed25519 public key in hex")
+        registry_key = raw_key.hex()
 
     from trace_verify._checkpoint import (
         CheckpointRecord,
@@ -475,6 +487,13 @@ def _main_chain(argv: list[str]) -> int:
         chain_errors = [f"malformed mmr_checkpoint: {exc}"]
     else:
         _, chain_errors = verify_checkpoint_chain(checkpoints)
+    if registry_key is not None:
+        for index, checkpoint in enumerate(checkpoints):
+            if checkpoint.key_id.lower() != registry_key:
+                chain_errors.append(
+                    f"checkpoint {index}: key_id {checkpoint.key_id!r} "
+                    f"does not match pinned registry key {registry_key!r}"
+                )
     errors = chain_errors + verify_chain_against_entries(entries)
 
     if args.as_json:
@@ -484,6 +503,7 @@ def _main_chain(argv: list[str]) -> int:
             "errors": errors,
         }
         if not errors:
+            result["key_id"] = checkpoints[-1].key_id
             result["mmr_size"] = checkpoints[-1].mmr_size
             result["root"] = checkpoints[-1].root
         print(json.dumps(result))
@@ -500,7 +520,7 @@ def _main_chain(argv: list[str]) -> int:
     print(
         f"OK: {len(checkpointed)} checkpoint(s) verified, chain-consistent and "
         f"matching the raw entries (mmr_size {checkpoints[-1].mmr_size}, "
-        f"root {checkpoints[-1].root})"
+        f"root {checkpoints[-1].root}, key_id {checkpoints[-1].key_id})"
     )
     return 0
 
