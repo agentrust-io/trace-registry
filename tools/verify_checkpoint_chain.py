@@ -32,11 +32,13 @@ Usage:
     trace-verify chain registry/2026/06/12.ndjson [MORE...]
     python tools/verify_checkpoint_chain.py registry/2026/06/12.ndjson [MORE...]
 
-Exit status: 0 if every entry with an mmr_checkpoint passes both checks
-(or no entry carries one), 1 otherwise.
+Exit status: 0 if at least one checkpoint exists and every checkpoint passes
+both checks, 1 otherwise. --allow-empty permits a registry with no checkpoints
+to exit 0 explicitly; it does not bypass verification of existing checkpoints.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -80,13 +82,18 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: verify_checkpoint_chain.py REGISTRY_NDJSON [MORE...]", file=sys.stderr)
         return 2
 
-    paths = [Path(a) for a in argv]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="+", type=Path, metavar="REGISTRY_NDJSON")
+    parser.add_argument("--allow-empty", action="store_true",
+                        help="allow a new registry with no checkpoints to exit 0")
+    args = parser.parse_args(argv)
+    paths = args.paths
     entries = _load_entries(paths)
     checkpointed = [e for e in entries if isinstance(e.get("mmr_checkpoint"), dict)]
 
     if not checkpointed:
-        print("no entries with mmr_checkpoint found; nothing to verify")
-        return 0
+        print("NOT VERIFIED: no entries with mmr_checkpoint found; nothing to verify")
+        return 0 if args.allow_empty else 1
 
     try:
         checkpoints = [CheckpointRecord.from_dict(e["mmr_checkpoint"]) for e in checkpointed]
