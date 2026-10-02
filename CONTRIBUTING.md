@@ -11,6 +11,25 @@ Thank you for your interest in contributing to the TRACE Registry.
 
 A pull request that adds or changes behaviour must add or update tests in `tests/` that fail without it. CI runs `python -m unittest discover -s tests` and `ruff check .`; both must pass before merge.
 
+## Running tests locally
+
+From the repository root, create a Python 3.12 virtual environment to match CI:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --require-hashes -r requirements/ci.txt
+pip install --require-hashes -r requirements/witness.txt
+pip install --require-hashes -r requirements/runtime.txt
+pip install --no-deps -e ".[signature]"
+python -m unittest discover -s tests
+ruff check .
+```
+
+On Windows, activate the environment with `.venv\Scripts\Activate.ps1` in
+PowerShell instead. The three lockfiles supply the CI tools, offline witness
+verification dependencies, and runtime dependencies before the editable install.
+
 ## Becoming a TRACE Producer
 
 A producer is any system that generates signed TRACE Trust Records and anchors them into the registry. To register your key:
