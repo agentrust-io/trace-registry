@@ -15,6 +15,7 @@ The TRACE Registry is append-only and its tamper-evidence depends on the Merkle 
 | Name | GitHub | Clone URL | Contact | Since |
 |---|---|---|---|---|
 | Sip Your Drink Ltd | [sipyourdrink-ltd/trace-registry-mirror](https://github.com/sipyourdrink-ltd/trace-registry-mirror) (mirrored branch: `main`) | https://github.com/sipyourdrink-ltd/trace-registry-mirror.git | forte@bernstein.run | 2026-09-20 |
+| HORIZON SHIELD (The HORIZONs Co., Ltd.) | [ogasurfproject-jpg/trace-registry-mirror](https://github.com/ogasurfproject-jpg/trace-registry-mirror) (mirrored branch: `main`) | https://github.com/ogasurfproject-jpg/trace-registry-mirror.git | contact@the-horizons-innovation.com | 2026-10-04 |
 
 See [docs/mirroring.md](docs/mirroring.md) for how to become a mirror operator and add your entry here.
 
