@@ -31,6 +31,48 @@ To submit:
 3. Wait up to 15 minutes for the pipeline to anchor and push proofs.
 4. Retrieve your proof from `proofs/YYYY/MM/DD/<batch_id>/<your-stem>.proof.json`.
 
+### Envelopes containing a final signed record
+
+A submission is an envelope E only when its top-level keys are exactly
+`producer`, `trace`, and `signature`, and `trace` is either a JSON text string
+or an object with its own `signature` member. This is a shape check, not inner
+signature verification. All other submissions keep whole-file anchoring in
+both modes, including direct TRACE records with additional top-level members
+and envelope-shaped objects whose nested `trace` has no `signature` member.
+
+For an envelope, the anchor subject is the final signed record R in `trace`:
+
+| `trace` representation | `sorted-key` | `as-transmitted` |
+| --- | --- | --- |
+| Object with its own `signature` member | Sorted-key bytes of R | Rejected: exact R text is unavailable |
+| String containing the exact JSON text of R | Sorted-key bytes of parsed R | Original string value encoded as UTF-8 |
+
+Text must decode to a JSON object with unique member names and satisfy the
+existing registry anchor claim profile. No reserialized-R or E fallback is
+used. For example, the carrier has this shape (signature placeholders are
+illustrative only):
+
+```json
+{
+  "producer": "your-component/1.0.0",
+  "trace": "{\"fmt\":1,\"signature\":\"<R signature>\"}",
+  "signature": "<E signature>"
+}
+```
+
+Sign E after setting its producer and complete `trace` value. The existing
+registered-producer verification authenticates E, including that text value;
+changing even whitespace inside the R text requires re-signing E. The nested
+R signature is retained, and its independent verification remains downstream.
+Batch IDs continue to use the complete submitted E, so an already recorded
+batch is skipped as before.
+
+For these new envelope proofs, supply R to the verifier below; for
+`as-transmitted`, use the exact UTF-8 bytes of the `trace` string value.
+Historical entries that anchored E remain evidence of E inclusion only.
+The entry format has no new subject marker: `canonicalization_id` declares
+the byte construction, not whether the subject was E or R.
+
 ## Retrieving your inclusion proof
 
 After anchoring, proofs are committed to `proofs/` and accessible via the GitHub API:

@@ -115,6 +115,45 @@ def _leaf_hash(
     ).digest()
 
 
+def _scheduled_leaf_hash(
+    raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
+) -> bytes:
+    """Select final R for envelopes; preserve whole-file leaves for direct records."""
+    from trace_verify._verify import anchor_profile_violation, loads_unique
+
+    trace = claim.get("trace")
+    is_envelope = set(claim) == {"producer", "trace", "signature"} and (
+        isinstance(trace, str)
+        or (isinstance(trace, dict) and "signature" in trace)
+    )
+    if not is_envelope:
+        return _leaf_hash(raw_bytes, claim, canonicalization_id)
+
+    if isinstance(trace, str):
+        if not trace:
+            raise ValueError("scheduled envelope 'trace' must contain nonempty R JSON text")
+        try:
+            record = loads_unique(trace)
+            record_raw = trace.encode("utf-8")
+        except (ValueError, RecursionError, UnicodeError) as exc:
+            raise ValueError(f"invalid scheduled envelope R JSON text: {exc}") from exc
+        if not isinstance(record, dict):
+            raise ValueError("scheduled envelope R JSON text must decode to an object")
+    else:
+        if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+            raise ValueError(
+                "as-transmitted scheduled envelope requires exact R JSON text "
+                "in 'trace'; object-valued trace has no exact R text"
+            )
+        record = trace
+        record_raw = b""
+
+    violation = anchor_profile_violation(record)
+    if violation is not None:
+        raise ValueError(f"scheduled envelope R: {violation}")
+    return _leaf_hash(record_raw, record, canonicalization_id)
+
+
 def _node_hash(left: bytes, right: bytes) -> bytes:
     return hashlib.sha256(NODE_PREFIX + left + right).digest()
 
@@ -346,7 +385,9 @@ def anchor_group(
     checkpoint_log: object | None = None,
 ) -> dict:
     """Anchor one producer group. Returns a result dict with status and details."""
-    leaves = [_leaf_hash(raw, claim, canonicalization_id) for _, claim, raw in records]
+    leaves = [
+        _scheduled_leaf_hash(raw, claim, canonicalization_id) for _, claim, raw in records
+    ]
     root, paths = _build_tree(leaves)
     root_hex = "sha256:" + root.hex()
 
