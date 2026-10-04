@@ -13,6 +13,13 @@
       "clone_url": "https://github.com/sipyourdrink-ltd/trace-registry-mirror.git",
       "head_api": "https://api.github.com/repos/sipyourdrink-ltd/trace-registry-mirror/commits/main",
       "contact": "forte@bernstein.run"
+    },
+    {
+      "name": "HORIZON SHIELD (The HORIZONs Co., Ltd.)",
+      "github": "ogasurfproject-jpg/trace-registry-mirror",
+      "clone_url": "https://github.com/ogasurfproject-jpg/trace-registry-mirror.git",
+      "head_api": "https://api.github.com/repos/ogasurfproject-jpg/trace-registry-mirror/commits/main",
+      "contact": "contact@the-horizons-innovation.com"
     }
   ]
 }
