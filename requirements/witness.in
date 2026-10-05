@@ -11,4 +11,4 @@
 # `pip install --require-hashes -r requirements/witness.txt` a single command
 # that can run the verifier, as docs/evidence/*/README.md instructs.
 cbor2==6.1.5
-scitt-cose==0.3.0
+scitt-cose==0.4.0
