@@ -30,6 +30,24 @@ On Windows, activate the environment with `.venv\Scripts\Activate.ps1` in
 PowerShell instead. The three lockfiles supply the CI tools, offline witness
 verification dependencies, and runtime dependencies before the editable install.
 
+## Release checks
+
+The PyPI workflow runs the existing CI validation job against the release or manual
+run's revision before building. The append-only comparison is explicitly skipped on
+those events because they have no push/PR base SHA; registry validation, checkpoint
+verification, staged-record dry runs and the test suite still run.
+
+Manual dispatch defaults to build-only. It builds and checks the wheel and sdist,
+installs each in a separate clean environment, and exercises the installed CLI outside
+the checkout with both valid evidence and a wrong anchor root. The resulting files are
+uploaded together. Only a published release or an explicit `dry_run=false` dispatch
+on the exact version tag can reach the separate PyPI job. That job downloads those
+checked artifacts and holds the `pypi` environment and OIDC permission; build-only
+execution has neither publishing authority.
+
+These workflow checks do not configure environment reviewers, registry trusted
+publishers or backup operators. Those settings remain separate maintainer work.
+
 ## Becoming a TRACE Producer
 
 A producer is any system that generates signed TRACE Trust Records and anchors them into the registry. To register your key:

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build and attest without publishing to PyPI"
+        description: "Build and verify artifacts without publishing to PyPI"
         required: false
         type: boolean
         default: true
@@ -15,12 +15,15 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    environment: pypi
+  validate:
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
-      id-token: write
+
+  build:
+    needs: validate
+    if: success() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -29,7 +32,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install --require-hashes -r requirements/publish.txt
+        run: |
+          pip install --require-hashes -r requirements/ci.txt -r requirements/publish.txt
 
       - name: Check the tag matches the packaged version
         # Build-only manual runs may use a branch. Every publication must use
@@ -59,15 +63,66 @@ jobs:
           test "$runtime" = "$packaged" || { echo "::error::__version__ $runtime does not match pyproject version $packaged"; exit 1; }
 
       - name: Build wheel and sdist
-        run: python -m build
+        run: python -m build --no-isolation
 
       - name: Validate artifacts
         run: |
           twine check dist/*
           ls -lh dist/
 
+      - name: Verify installed wheel and sdist
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH PYTHONHOME
+          source_root="$PWD"
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          for artifact in "${wheels[@]}" "${sdists[@]}"; do
+            artifact_path="$source_root/$artifact"
+            check_dir=$(mktemp -d)
+            python -m venv "$check_dir/venv"
+            "$check_dir/venv/bin/python" -m pip install --require-hashes \
+              -r requirements/ci.txt -r requirements/runtime.txt
+            # hatchling and its dependencies are locked above; rebuilding the
+            # sdist cannot fetch an unpinned backend through build isolation.
+            "$check_dir/venv/bin/python" -m pip install --no-deps --no-build-isolation "$artifact_path"
+            (
+              cd "$check_dir"
+              "$check_dir/venv/bin/python" -I "$source_root/tools/check_installed_artifact.py" \
+                "$source_root" "$version"
+            )
+          done
+
+      - name: Upload verified distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trace-verify-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, build]
+    if: >-
+      success() && needs.validate.result == 'success' && needs.build.result == 'success' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false'))
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: trace-verify-dist
+          path: dist/
+
       - name: Publish to PyPI
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           skip-existing: true

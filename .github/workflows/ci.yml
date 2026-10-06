@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -74,6 +75,8 @@ jobs:
             | python -c "import json,sys; r=json.load(sys.stdin); assert r['verified'] and r['leaf_index'] == 936, r"
 
       - name: Determine base SHA for append-only check
+        # Release/manual validation has no push/PR comparison base.
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         id: base
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -89,7 +92,7 @@ jobs:
           fi
 
       - name: Check registry is append-only
-        if: steps.base.outputs.sha != ''
+        if: (github.event_name == 'push' || github.event_name == 'pull_request') && steps.base.outputs.sha != ''
         env:
           BASE_SHA: ${{ steps.base.outputs.sha }}
         run: python tools/check_append_only.py "$BASE_SHA"
