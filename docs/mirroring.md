@@ -1,6 +1,8 @@
 # Mirroring the TRACE Registry
 
-The TRACE Registry's tamper-evidence guarantee requires that the git commit history be independently held by multiple organizations. A single-point-of-failure undermines the audit trail. This document explains what a mirror does, how to set one up, and how mirrors stay in sync.
+A mirror is a copy of this registry kept by another organization. If the registry's history were ever rewritten, the mirrors' copies would no longer match, so the more independent mirrors there are, the harder a quiet rewrite becomes. This page is for organizations that want to run one: what a mirror does, how to set one up, and how mirrors stay in sync. Two are registered today; see [MIRRORS.md](../MIRRORS.md).
+
+The TRACE Registry's tamper-evidence guarantee requires that the git commit history be independently held by multiple organizations. A single-point-of-failure undermines the audit trail.
 
 ## What a mirror does
 

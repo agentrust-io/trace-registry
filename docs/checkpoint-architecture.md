@@ -1,5 +1,10 @@
 # Checkpoint log pattern for high-volume anchoring
 
+This page records a design decision for a future in which the registry receives far
+more records than it does today. It is not built. The signed checkpoint chain that
+does run today is a separate mechanism with a different purpose, described in
+[mmr-checkpoint.md](mmr-checkpoint.md).
+
 **Status: architecture decision -- not yet implemented**
 
 This document captures the design decision described in issue #17. No implementation work is required until the simpler batch-per-commit model shows strain at production volume.

@@ -6,26 +6,38 @@
 
 Community updates and contributor highlights: [AgenTrust on LinkedIn](https://www.linkedin.com/company/agentrust-io/).
 
-The public accountability layer for TRACE claim anchors. Each entry records the
-Merkle root of a batch of signed TRACE Trust Records, committed to this
-repository as an append-only record. Git's commit history is the
-tamper-evidence layer: any rewrite of a published entry diverges the commit
-hashes that auditors and mirrors have already observed.
+The TRACE Registry is a public log that only ever grows. It holds fingerprints of
+TRACE records, the signed receipts that say what an AI agent ran and what it did
+([the terms, in plain English](https://agentrust-io.com/#plain-terms)). If you are
+handed a TRACE record, the registry lets you prove it was logged on a given date and
+has not changed since, without trusting whoever gave it to you.
+
+Technically, each entry records the Merkle root (one hash that commits to a whole
+batch) of a batch of signed TRACE Trust Records, committed to this repository as an
+append-only record. Git's commit history is the tamper-evidence layer: any rewrite of
+a published entry diverges the commit hashes that auditors and mirrors have already
+observed.
 
 Project support is recognized in [SPONSORS.md](SPONSORS.md).
 
 ## Current Registry State
 
-The registry currently contains **two** entries, and neither is a production Trust
-Record.
+The registry currently contains **three** entries. It is still a very small log.
 
 - `registry/2026/06/12.ndjson`, producer `cmcp-gateway`, is a software-only example
   anchor with advisory enforcement and a zeroed measurement, committed as a
   launch-day example.
 - `registry/2026/09/01.ndjson`, producer `verifiable-agent-summit-demo`, is a
-  demonstration anchor produced for a conference session.
+  demonstration anchor produced for a conference session. It carries the first
+  signed checkpoint (`mmr_checkpoint`, a signed summary of the log so far), and that
+  checkpoint has an external witness receipt (below).
+- `registry/2026/09/25.ndjson`, producer `bernstein/3.20.0`, is the first record
+  from a producer we do not operate: a Level 0 record (software-only, zeroed
+  measurement) of one Bernstein run, with the producer key registered in [#84](https://github.com/agentrust-io/trace-registry/pull/84) and
+  the record submitted in [#85](https://github.com/agentrust-io/trace-registry/pull/85). It carries the second checkpoint, with a proof that
+  it extends the first.
 
-No production entries have been anchored yet.
+The first two were produced by us as examples.
 
 The anchoring pipeline is live and runs on a schedule, verifying producer signatures
 before it anchors anything. A scheduled run with nothing to anchor is a no-op, so the
@@ -37,16 +49,27 @@ tree, inclusion proofs) is specified in
 verifier from that document alone; the reference tools in [tools/](tools/) are
 one implementation.
 
-> **Status.** The format, reference tooling, schema validation, and two anchored
-> entries are live. Scheduled anchoring is operational and `trace-verify` is
-> published on PyPI. What is missing is volume: two entries, both produced by us,
-> neither of them production, and no mirror we do not operate.
+> **Status.** The format, reference tooling, schema validation, and three anchored
+> entries are live. Scheduled anchoring is operational and `trace-verify` 0.4.3 is
+> published on PyPI. What is missing is volume: three entries, one of them from an
+> outside producer. Two organizations we do not operate hold registered mirrors
+> (Sip Your Drink Ltd since 2026-09-20, HORIZON SHIELD since 2026-10-04; see
+> [MIRRORS.md](MIRRORS.md)).
 > See [ROADMAP.md](ROADMAP.md) for what that means and what would change it, and
 > [LIMITATIONS.md](LIMITATIONS.md) for what an anchor does and does not prove.
 
 ## External witness receipt
 
-Checkpoint 1 now has an offline-verifiable receipt from an independently operated witness.
+A witness is an outside service that keeps its own record of a checkpoint, so the
+registry could not later rewrite that part of its history without the witness's copy
+disagreeing. Checkpoint 1 (in the 09/01 entry) has a receipt from one independently
+operated witness, and anyone can verify it offline. The second checkpoint has not been
+sent to a witness. One receipt shows that the witness recorded that checkpoint; it does
+not show that every observer saw the same history.
+
+<details>
+<summary>Technical detail: what the receipt binds, and capturing another one</summary>
+
 The [September 7 evidence packet](docs/evidence/witness-2026-09-07/README.md) includes the
 original checkpoint, returned receipt, separately fetched copies, key provenance and verifier.
 It proves inclusion of that checkpoint signing-body digest under the pinned witness key.
@@ -76,6 +99,9 @@ python tools/capture_witness_receipt.py \
 Sending the whole entry instead of the checkpoint inside it is the way this goes
 wrong quietly, because the witness then registers a digest over the wrong object
 and returns a receipt that is internally consistent with what it was given.
+
+</details>
+
 The pipeline does not yet submit future checkpoints automatically. Parallel independent
 witnesses remain supported as a deployment choice; only one operator is demonstrated here.
 
@@ -147,8 +173,9 @@ It does not prove the claim is true, and it is not a statement about anything
 the claim asserts.
 
 **Does the registry's own history hold?** Batches anchored via the aggregator
-carry a signed `mmr_checkpoint` proving, by math, that each entry honestly
-extends the previous one, not just that git history was not rewritten.
+carry a signed `mmr_checkpoint`: a summary of the whole log so far, plus a proof
+that it only adds to the previous summary. That shows, by math, that each entry
+honestly extends the previous one, which says more than an unrewritten git history.
 
 ```bash
 trace-verify chain registry/2026/06/12.ndjson registry/2026/09/01.ndjson
@@ -167,6 +194,8 @@ JSON output reports `verified: false`, `checkpoints: 0`, and
 `reason: "no_checkpoints"`. The empty `errors` list means no integrity error was
 established; it does not mean verification succeeded. The June entry alone has
 no checkpoint, which is why the example above also includes the September file.
+CI checks every entry at once with `trace-verify chain registry/*/*/*.ndjson`, which
+today covers both checkpoints.
 
 **Does an outside witness agree?** Verifying a witness receipt needs COSE, so it
 ships as an extra rather than in the base install:
