@@ -27,7 +27,7 @@ def _fake_mirrors_json(mirrors=None) -> dict:
             "name": "canonical",
             "github": "agentrust-io/trace-registry",
             "head_api": "https://api.github.com/repos/agentrust-io/trace-registry/commits/HEAD",
-            "contact": "security@opaque.co",
+            "contact": "imransiddique@live.com",
         },
         "mirrors": mirrors or [],
     }

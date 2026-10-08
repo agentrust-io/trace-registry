@@ -8,7 +8,7 @@ The TRACE Registry is append-only and its tamper-evidence depends on the Merkle 
 |---|---|
 | Owner | agentrust-io |
 | URL | https://github.com/agentrust-io/trace-registry |
-| Contact | security@opaque.co |
+| Contact | imransiddique@live.com |
 
 ## Registered mirrors
 

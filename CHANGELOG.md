@@ -12,6 +12,11 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **Security contact changed.** The canonical repository in `mirrors.json`
+  and `MIRRORS.md`, and the `cmcp-gateway/0.1.0` and
+  `verifiable-agent-summit-demo/0.1.0` producer key files, now list
+  `imransiddique@live.com`. Producer keys are unchanged.
+
 ## [0.4.3] - 2026-09-30
 
 - **Duplicate JSON members are refused.** The `trace-verify` CLI parsed the
