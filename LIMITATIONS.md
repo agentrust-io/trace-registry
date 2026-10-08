@@ -31,10 +31,11 @@ and no independent copy to compare against, they cannot detect a rewrite that ha
 arrived. They are trusting the operator.
 
 **The operator and the log are currently the same party.**
-OPAQUE Systems runs the anchoring pipeline and hosts the canonical repository, and there is no
-mirror operated by anyone else. A mirror run by the operator checks almost nothing. Until an
-organization with no incentive to cover for us holds a copy, the independence claim rests on
-intent rather than on structure. See [MIRRORS.md](MIRRORS.md) and
+OPAQUE Systems runs the anchoring pipeline and hosts the canonical repository. Two organizations
+we do not operate now hold registered mirrors: Sip Your Drink Ltd since 2026-09-20 and HORIZON
+SHIELD since 2026-10-04, both matching canonical on 2026-10-07 by `tools/check_mirrors.py`. A
+mirror protects readers only against a rewrite after it first synced, and only when someone
+compares against it. A mirror run by the operator checks almost nothing. See [MIRRORS.md](MIRRORS.md) and
 [docs/mirroring.md](docs/mirroring.md).
 
 **One checkpoint has an independently operated witness receipt.**
@@ -117,14 +118,16 @@ only rejects a clock that is implausible on its face.
 
 ## What is in the log today
 
-**Two entries, neither of them production.**
+**Three entries, a very small log.**
 `registry/2026/06/12.ndjson` is a software-only launch-day example with advisory enforcement and a
 zeroed measurement. `registry/2026/09/01.ndjson` is a demonstration anchor produced for a
-conference session. Both were produced by us. No production Trust Record has been anchored.
+conference session. Both were produced by us. `registry/2026/09/25.ndjson` is a Level 0 record
+(software-only, zeroed measurement) of one run by `bernstein/3.20.0`, the first producer we do not
+operate ([#84](https://github.com/agentrust-io/trace-registry/pull/84), [#85](https://github.com/agentrust-io/trace-registry/pull/85)). No outside producer has anchored a record carrying hardware evidence.
 
-**One independent producer count: zero.**
-Both registered producers are ours. The format is more valuable the more independent producers
-anchor into it, and that number has not started yet.
+**Independent producers: one.**
+Of the three registered producers, `bernstein/3.20.0` is the only one we do not operate. The
+format is more valuable the more independent producers anchor into it.
 
 ## Operational boundaries
 

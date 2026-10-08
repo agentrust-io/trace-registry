@@ -1,5 +1,12 @@
 # CLL checkpoint chain: cryptographic consistency between anchoring runs
 
+Each new registry entry carries a checkpoint: a signed summary of the whole log so far,
+with a proof that it only adds to the previous summary and changes nothing before it.
+This page explains how that works and what it does and does not catch. It is for
+auditors and anyone writing their own verifier; to just run the check, use
+`trace-verify chain` (see "Reference verifier" below). As of 2026-10-07 the registry
+holds two checkpoints, in `registry/2026/09/01.ndjson` and `registry/2026/09/25.ndjson`.
+
 **Status: implemented.** Conforms to `draft-mih-scitt-checkpointed-local-log`
 (CLL) and its companion MMR/COSE-Receipts mechanism. See
 `aggregator/_mmr_log.py`, `src/trace_verify/_mmr.py`,

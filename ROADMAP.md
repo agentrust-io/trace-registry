@@ -15,9 +15,10 @@
 
 ## Honest status
 
-The registry holds **two entries**, neither of them production: a software-only
-launch-day example (`registry/2026/06/12.ndjson`) and a demonstration anchor
-produced for a conference session (`registry/2026/09/01.ndjson`). The machinery is
+The registry holds **three entries**: a software-only launch-day example
+(`registry/2026/06/12.ndjson`) and a demonstration anchor produced for a conference
+session (`registry/2026/09/01.ndjson`), both ours, and a Level 0 record from the
+first outside producer, `bernstein/3.20.0` (`registry/2026/09/25.ndjson`). The machinery is
 live and the format is real; the volume is not there yet. A scheduled run with
 nothing to anchor is a no-op, so a long gap between entries reflects claim volume
 rather than a broken pipeline.
@@ -29,8 +30,10 @@ layer waiting for production traffic.
 
 - **Production claim volume**, from producers other than our own. The format is more
   valuable the more independent producers anchor into it, and right now the number
-  of independent producers is zero.
-- **An independent mirror we do not operate.** A mirror run by OPAQUE Systems
+  of independent producers is one.
+- **More independent mirrors.** Two organizations we do not operate hold registered
+  mirrors (Sip Your Drink Ltd since 2026-09-20, HORIZON SHIELD since 2026-10-04).
+  More are welcome. A mirror run by OPAQUE Systems
   checks almost nothing: the value comes from an operator with no incentive to
   cover for us. See [MIRRORS.md](MIRRORS.md) and
   [docs/mirroring.md](docs/mirroring.md).
@@ -44,7 +47,7 @@ layer waiting for production traffic.
 
 ## Later
 
-- Parallel witnesses and an independent mirror. The September 7 receipt demonstrates
+- Parallel witnesses and split-view monitoring. The September 7 receipt demonstrates
   one checkpoint at one external operator; see the evidence packet linked from README.
   A second operator, continuous submission and independent split-view monitoring remain open.
 - A conformance suite for third-party verifier implementations, so "I implemented

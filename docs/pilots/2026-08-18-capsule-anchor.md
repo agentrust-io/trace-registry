@@ -1,4 +1,9 @@
-# Capsule Anchor receipt pilot — 2026-08-18
+# Capsule Anchor receipt pilot, 2026-08-18
+
+This is the record of a one-off experiment on 2026-08-18: we sent the fingerprint of
+one signed TRACE record (never the record itself) to an outside transparency log, got
+back a signed receipt, and checked that receipt with separate software. It shows the
+two systems can work together; it does not set up a permanent integration.
 
 This pilot tests one narrow composition: an external SCITT transparency service
 issues a verifiable receipt over a TRACE Anchor Format v1 leaf digest. Only the
