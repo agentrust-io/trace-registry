@@ -93,7 +93,7 @@ Open a pull request against the canonical repo adding your entry to `mirrors.jso
 
 Requirements for registration:
 
-- Your organization is independent from OPAQUE Systems.
+- Your organization is independent from the AgenTrust project.
 - Your mirror is publicly accessible (no authentication required to read).
 - You commit to keeping the mirror running for at least 12 months, or to removing the entry if you stop.
 - You have a published security contact.

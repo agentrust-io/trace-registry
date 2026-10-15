@@ -33,11 +33,11 @@ layer waiting for production traffic.
   of independent producers is one.
 - **More independent mirrors.** Two organizations we do not operate hold registered
   mirrors (Sip Your Drink Ltd since 2026-09-20, HORIZON SHIELD since 2026-10-04).
-  More are welcome. A mirror run by OPAQUE Systems
+  More are welcome. A mirror run by the AgenTrust project
   checks almost nothing: the value comes from an operator with no incentive to
   cover for us. See [MIRRORS.md](MIRRORS.md) and
   [docs/mirroring.md](docs/mirroring.md).
-- **Maintainers from outside OPAQUE Systems** ([MAINTAINERS.md](MAINTAINERS.md)),
+- **Maintainers who do not run a producer anchoring here** ([MAINTAINERS.md](MAINTAINERS.md)),
   for the same reason.
 - **Automated submission to independent witnesses**, with receipts retained and verified
   under explicit key policies. Checkpointing itself is live since September 1;
