@@ -55,6 +55,7 @@ class TestLeafSubject(unittest.TestCase):
                     rc, standalone_rc, result = self._verify(obj, name, mode)
                     self.assertEqual((rc, standalone_rc), (0, 0))
                     self.assertEqual(result['leaf_subject'], name)
+                    self.assertIs(result['leaf_subject_marked'], True)
                     wrong = 'record' if name == 'envelope' else 'envelope'
                     rc, standalone_rc, result = self._verify(obj, wrong, mode)
                     self.assertEqual((rc, standalone_rc), (1, 1))
@@ -66,6 +67,7 @@ class TestLeafSubject(unittest.TestCase):
                 rc, standalone_rc, result = self._verify(obj, name, mode, legacy=True)
                 self.assertEqual((rc, standalone_rc), (0, 0))
                 self.assertEqual(result['leaf_subject'], name)
+                self.assertIs(result['leaf_subject_marked'], False)
         self.assertEqual(resolve_leaf_subject({'ts': '2099-01-01T00:00:00Z'}), 'unknown')
         self.assertEqual(standalone.resolve_leaf_subject({}), 'unknown')
 

@@ -209,6 +209,7 @@ def _output(
             "ts": entry.get("ts"),
             "canonicalization_id": canonicalization_id,
             "leaf_subject": leaf_subject,
+            "leaf_subject_marked": "leaf_subject" in entry,
         }
         if sig_result is not None:
             result["signature_valid"] = sig_result
