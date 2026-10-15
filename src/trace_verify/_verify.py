@@ -50,6 +50,35 @@ class MismatchedCanonicalizationLayerError(ValueError):
     docs/anchor-format.md section 0."""
 
 
+def claim_leaf_subject(claim: dict) -> str:
+    """Classify retained bytes; never select or retry a different object."""
+    if not isinstance(claim, dict):
+        raise ValueError("retained leaf subject is not a JSON object")
+    trace = claim.get("trace")
+    envelope = set(claim) == {"producer", "trace", "signature"} and (
+        isinstance(trace, str) or (isinstance(trace, dict) and "signature" in trace)
+    )
+    return "envelope" if envelope else "record"
+
+
+def resolve_leaf_subject(entry: dict, retained_claim: dict | None = None) -> str:
+    """Resolve a batch marker or retained subject; missing evidence is unknown.
+
+    Callers must independently verify inclusion of the retained bytes before
+    treating their shape as evidence about an unmarked entry.
+    """
+    if "leaf_subject" in entry:
+        subject = entry["leaf_subject"]
+        if not isinstance(subject, str) or subject not in {"envelope", "record"}:
+            raise ValueError("leaf_subject must be envelope or record")
+        if entry.get("entry_type", "batch") != "batch":
+            raise ValueError("leaf_subject applies only to batch entries")
+        if retained_claim is not None and claim_leaf_subject(retained_claim) != subject:
+            raise ValueError("retained claim does not match entry leaf_subject")
+        return subject
+    return "unknown" if retained_claim is None else claim_leaf_subject(retained_claim)
+
+
 def canonical_claim_bytes(
     claim: dict,
     *,

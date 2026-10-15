@@ -12,6 +12,10 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- Declare `leaf_subject` on new batch entries independently of canonicalization.
+  Preserve legacy bytes and require retained input plus inclusion to establish
+  an unmarked subject; without retained evidence report `unknown`.
+
 - **Security contact changed.** The canonical repository in `mirrors.json`
   and `MIRRORS.md`, and the `cmcp-gateway/0.1.0` and
   `verifiable-agent-summit-demo/0.1.0` producer key files, now list
