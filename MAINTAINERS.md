@@ -4,7 +4,7 @@
 
 | Name | Affiliation | GitHub | Role |
 |------|-------------|--------|------|
-| Imran Siddique | AgenTrust-io | @agentrust-io | Project Lead |
+| Imran Siddique | AgenTrust-io | @imran-siddique | Project Lead |
 
 Final decision authority on the anchor format, verification semantics, and
 Maintainer appointments. See [GOVERNANCE.md](GOVERNANCE.md).
