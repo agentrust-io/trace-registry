@@ -19,7 +19,7 @@ operator or by any maintainer.
 
 ## Who operates this
 
-The operator of record is named in [MAINTAINERS.md](MAINTAINERS.md). It is OPAQUE Systems today.
+The operator of record is named in [MAINTAINERS.md](MAINTAINERS.md). It is the AgenTrust project today.
 
 The operator is expected to change. The registry is intended to be run by a neutral body, and
 these terms travel with the service rather than with whoever is running it. A change of operator

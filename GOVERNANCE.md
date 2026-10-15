@@ -47,7 +47,7 @@ the Project Lead.
 ### Project Lead
 
 Final decision authority on the anchor format, verification semantics, and
-Maintainer appointments. Currently Imran Siddique (OPAQUE Systems). See
+Maintainer appointments. Currently Imran Siddique. See
 [MAINTAINERS.md](MAINTAINERS.md).
 
 ## Changes that need extra care
@@ -72,7 +72,7 @@ findable later by someone auditing why a rule exists.
 
 ## Conflict of interest
 
-OPAQUE Systems operates a producer that anchors into this registry. That is a
+The AgenTrust project operates a producer that anchors into this registry. That is a
 conflict, and the answer to it is not a promise of good behaviour: it is that the
 registry is append-only, publicly mirrored, and verifiable without trusting the
 operator. If you find a case where trusting us is still required, that is a bug
