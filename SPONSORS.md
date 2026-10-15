@@ -1,16 +1,8 @@
 # Sponsors
 
-TRACE Registry is an open-source AgenTrust project. It is sponsored by OPAQUE
-Systems, which funds the engineering, infrastructure and confidential-computing
-work behind it. Organisations that want to support the project are welcome to
-join as sponsors.
+AgenTrust is an independent open-source project. No company funds, owns or directs it; contributions are voluntary.
 
-## Current sponsors
-
-### OPAQUE Systems
-
-Founding engineering and infrastructure sponsor, registry producer operator,
-and contributor to the TRACE ecosystem.
+OPAQUE Systems sponsored early development until October 2026.
 
 ## Recognition and conflict policy
 

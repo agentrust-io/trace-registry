@@ -47,7 +47,7 @@ the Project Lead.
 ### Project Lead
 
 Final decision authority on the anchor format, verification semantics, and
-Maintainer appointments. Currently Imran Siddique (OPAQUE Systems). See
+Maintainer appointments. Currently Imran Siddique. See
 [MAINTAINERS.md](MAINTAINERS.md).
 
 ## Changes that need extra care
