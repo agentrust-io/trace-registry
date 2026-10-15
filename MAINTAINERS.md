@@ -16,11 +16,18 @@ Maintainer appointments. See [GOVERNANCE.md](GOVERNANCE.md).
 | Louie Lu | [@lywinged](https://github.com/lywinged) | [Community handover](https://github.com/agentrust-io/.github/issues/60) |
 | Rajnish Tiwari | [@rajnisht7](https://github.com/rajnisht7) | [Community handover](https://github.com/agentrust-io/.github/issues/60) |
 
+## Reviewers
+
+| Name | GitHub | Since |
+|---|---|---|
+| Alex Chernysh | [@chernistry](https://github.com/chernistry) | 2026-10-15, [accepted](https://github.com/agentrust-io/.github/issues/60#issuecomment-6186352539) |
+
 ## How to become a maintainer
 
 **Maintainer**: 3+ merged substantive PRs and demonstrated judgment on the anchor
 format or verification semantics. Nominated by a Maintainer, confirmed by the
-Project Lead. Maintainers hold publish rights on the `trace-verify` package.
+Project Lead. Publishing `trace-verify` runs through the `pypi` release
+environment, whose approvers are set separately from this list.
 
 We particularly welcome maintainers who do not work for the operator that anchors
 into this registry. A registry whose only maintainers work for that operator is
