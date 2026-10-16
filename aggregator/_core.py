@@ -322,7 +322,9 @@ class TRACEAggregator:
         completed: dict[str, dict] = {}
         proof_index: dict[tuple[str, int], dict] = {}
 
-        groups: dict[tuple[str, str], list[tuple[str, dict, bytes | None]]] = {}
+        from trace_verify._verify import claim_leaf_subject
+
+        groups: dict[tuple[str, str, str], list[tuple[str, dict, bytes | None]]] = {}
         for jid, claim, canon_id, raw in batch:
             producer = claim.get("producer", "__unknown__")
             if not isinstance(producer, str):
@@ -333,9 +335,9 @@ class TRACEAggregator:
                                   "reason": "claim's top-level 'producer' is not a string",
                                   "producer": None}
                 continue
-            groups.setdefault((producer, canon_id), []).append((jid, claim, raw))
+            groups.setdefault((producer, canon_id, claim_leaf_subject(claim)), []).append((jid, claim, raw))
 
-        for (producer, canon_id), group in groups.items():
+        for (producer, canon_id, leaf_subject), group in groups.items():
             # Fail-closed: verify every claim's signature against the producer's
             # registered key before anchoring. Reject the whole group if the
             # producer has no active registered key, or any claim's signature
@@ -370,6 +372,7 @@ class TRACEAggregator:
                 "producer": producer,
                 "batch_id": b_id,
                 "canonicalization_id": canon_id,
+                "leaf_subject": leaf_subject,
             }
 
             if self._checkpoint_log is not None:

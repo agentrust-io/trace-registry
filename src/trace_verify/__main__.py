@@ -50,6 +50,7 @@ from trace_verify._verify import (
     VINTAGE_CANONICALIZATION,
     decode_hash,
     loads_unique,
+    resolve_leaf_subject,
     verify_inclusion,
 )
 
@@ -198,7 +199,7 @@ def _die(msg: str, code: int = 2) -> None:
 
 def _output(
     ok: bool, entry: dict, sig_result: bool | None, as_json: bool,
-    canonicalization_id: str, key_source: str | None = None,
+    canonicalization_id: str, key_source: str | None = None, leaf_subject: str = "unknown",
 ) -> None:
     if as_json:
         result: dict = {
@@ -207,6 +208,8 @@ def _output(
             "merkle_root": entry.get("merkle_root"),
             "ts": entry.get("ts"),
             "canonicalization_id": canonicalization_id,
+            "leaf_subject": leaf_subject,
+            "leaf_subject_marked": "leaf_subject" in entry,
         }
         if sig_result is not None:
             result["signature_valid"] = sig_result
@@ -222,7 +225,7 @@ def _output(
         print(
             f"OK: claim is included in batch {entry.get('batch_id')!r} "
             f"(root {entry.get('merkle_root')}, ts {entry.get('ts')}, "
-            f"canonicalization_id {canonicalization_id!r}){sig_note}"
+            f"canonicalization_id {canonicalization_id!r}, leaf_subject {leaf_subject!r}){sig_note}"
         )
         if key_source is not None:
             # A key fetched over the network is a different trust statement
@@ -311,6 +314,7 @@ def _main_inclusion(argv: list[str] | None) -> int:
             raise ValueError("claim is not a JSON object")
         if not isinstance(proof, dict):
             raise ValueError("proof is not a JSON object")
+        leaf_subject = resolve_leaf_subject(entry, claim)
         raw_path = proof.get("audit_path")
         if not isinstance(raw_path, list):
             raise ValueError("proof.audit_path must be a list")
@@ -406,7 +410,7 @@ def _main_inclusion(argv: list[str] | None) -> int:
             _die(reason, code=1)
 
     _output(ok, entry, sig_result, args.as_json, canonicalization_id,
-            key_source=key_source)
+            key_source=key_source, leaf_subject=leaf_subject if ok else "unknown")
     return 0 if ok else 1
 
 

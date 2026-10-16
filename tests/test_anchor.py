@@ -275,7 +275,7 @@ class TestEntryFormat(unittest.TestCase):
         entry = anchor.make_entry(root, 2, "cmcp-gateway/0.1.0", "b-1", "2026-06-12T00:00:00Z")
         self.assertEqual(
             sorted(entry),
-            ["batch_id", "canonicalization_id", "leaf_count", "merkle_root", "producer", "ts"],
+            ["batch_id", "canonicalization_id", "leaf_count", "leaf_subject", "merkle_root", "producer", "ts"],
         )
         self.assertEqual(entry["merkle_root"], "sha256:" + root.hex())
         self.assertEqual(entry["leaf_count"], 2)

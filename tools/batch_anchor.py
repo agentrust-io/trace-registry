@@ -119,13 +119,10 @@ def _scheduled_leaf_hash(
     raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
 ) -> bytes:
     """Select final R for envelopes; preserve whole-file leaves for direct records."""
-    from trace_verify._verify import anchor_profile_violation, loads_unique
+    from trace_verify._verify import anchor_profile_violation, loads_unique, claim_leaf_subject
 
     trace = claim.get("trace")
-    is_envelope = set(claim) == {"producer", "trace", "signature"} and (
-        isinstance(trace, str)
-        or (isinstance(trace, dict) and "signature" in trace)
-    )
+    is_envelope = claim_leaf_subject(claim) == "envelope"
     if not is_envelope:
         return _leaf_hash(raw_bytes, claim, canonicalization_id)
 
@@ -398,6 +395,7 @@ def anchor_group(
         "producer": producer,
         "batch_id": batch_id,
         "canonicalization_id": canonicalization_id,
+        "leaf_subject": "record",
     }
 
     # Destination paths

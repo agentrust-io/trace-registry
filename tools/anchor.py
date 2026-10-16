@@ -187,6 +187,7 @@ def make_entry(
     batch_id: str,
     ts: str,
     canonicalization_id: str = DEFAULT_CANONICALIZATION,
+    leaf_subject: str = "record",
 ) -> dict:
     """Assemble a registry entry object (docs/anchor-format.md section 4).
 
@@ -194,6 +195,8 @@ def make_entry(
     construction -- the fix this PR makes is that the construction is
     declared on every new entry, not assumed from context.
     """
+    if leaf_subject not in {"envelope", "record"}:
+        raise ValueError("leaf_subject must be envelope or record")
     return {
         "ts": ts,
         "merkle_root": "sha256:" + root.hex(),
@@ -201,6 +204,7 @@ def make_entry(
         "producer": producer,
         "batch_id": batch_id,
         "canonicalization_id": canonicalization_id,
+        "leaf_subject": leaf_subject,
     }
 
 
@@ -306,6 +310,11 @@ def main(argv: list[str] | None = None) -> int:
 
     claim_paths = [Path(p) for p in args.claims]
     loaded = [_load_claim(p) for p in claim_paths]
+    from trace_verify._verify import claim_leaf_subject
+
+    subjects = {claim_leaf_subject(claim) for claim, _ in loaded}
+    if len(subjects) != 1:
+        parser.error("a batch cannot mix envelope and record leaf subjects")
     leaves = [
         leaf_hash(claim, canonicalization_id=args.canonicalization, raw_bytes=raw)
         for claim, raw in loaded
@@ -316,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         "%Y-%m-%dT%H:%M:%SZ"
     )
     batch_id = args.batch_id or root.hex()[:12]
-    entry = make_entry(root, len(leaves), args.producer, batch_id, ts, args.canonicalization)
+    entry = make_entry(root, len(leaves), args.producer, batch_id, ts, args.canonicalization, subjects.pop())
 
     proof_dir = Path(args.proof_dir)
     proof_dir.mkdir(parents=True, exist_ok=True)

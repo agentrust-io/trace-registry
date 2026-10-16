@@ -56,6 +56,11 @@
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
       "description": "Checkpoint only: timestamp of the latest batch covered"
     },
+    "leaf_subject": {
+      "type": "string",
+      "enum": ["envelope", "record"],
+      "description": "Batch leaf subject, independent of canonicalization_id. New writers emit it. Legacy absence is unmarked; retained subject bytes plus successful inclusion establish its shape, otherwise report unknown. Never infer from timestamps or try alternate objects."
+    },
     "canonicalization_id": {
       "type": "string",
       "enum": ["sorted-key", "as-transmitted"],
@@ -100,6 +105,7 @@
     "required": ["entry_type"]
   },
   "then": {
-    "required": ["batch_count", "first_batch_ts", "last_batch_ts"]
+    "required": ["batch_count", "first_batch_ts", "last_batch_ts"],
+    "not": {"required": ["leaf_subject"]}
   }
 }

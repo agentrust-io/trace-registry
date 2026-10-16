@@ -60,3 +60,30 @@ all select the construction by this declared token rather than assuming one,
 so a mismatched-layer request (naming a signing-layer algorithm such as `jcs`
 where an anchor-leaf construction is expected) fails loudly with a named
 error instead of a silent non-verify.
+
+## Batch leaf subject
+
+Every new batch entry declares `leaf_subject` beside `canonicalization_id`.
+`envelope` denotes the producer transport envelope; `record` denotes the final
+record or a direct record. The recognized transport envelope has exactly
+`producer`, `trace`, and `signature`, with `trace` holding final signed record
+JSON text or a signed record object. Subject and byte canonicalization are
+independent; either subject supports both existing constructions.
+
+The scheduled writer extracts the final record and declares `record`. HTTP
+aggregation and manual anchoring retain their existing whole-object leaf bytes
+and declare the supplied object's subject. HTTP aggregation separates subjects
+into batches; manual anchoring refuses a mixed-subject batch. The marker is
+written before MMR checkpoint construction and is covered by the existing entry
+digest. Inclusion alone does not authenticate registry metadata; verifying the
+checkpoint chain and pinning the registry key remain separate checks.
+
+Legacy entries remain unchanged. Missing `leaf_subject` means unmarked, including
+entries between the final-record change and this marker. With no retained input,
+`resolve_leaf_subject(entry)` reports `unknown`. Inclusion verification accepts
+one explicitly supplied retained subject file and checks exactly those bytes;
+a successful proof establishes whether that retained file is an envelope or a
+record. A failed legacy proof reports no established subject. Verifiers never
+use timestamps to infer a subject, extract an alternate object on failure, or
+try both objects. An explicit invalid marker or mismatch with the supplied file
+refuses. Checkpoint/batch-of-batches entries do not use this batch-only field.
