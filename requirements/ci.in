@@ -4,3 +4,4 @@
 jsonschema==4.26.0
 hatchling
 ruff
+PyYAML==6.0.3
