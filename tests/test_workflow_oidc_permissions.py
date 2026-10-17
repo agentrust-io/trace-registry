@@ -17,36 +17,43 @@ OIDC_JOBS = {
 
 def oidc_write(permissions):
     if isinstance(permissions, str):
-        assert permissions in {"read-all", "write-all"}, "unsupported permission shorthand"
+        if permissions not in {"read-all", "write-all"}:
+            raise ValueError("unsupported permission shorthand")
         return permissions == "write-all"
-    assert isinstance(permissions, dict), "permissions must be a mapping or shorthand"
+    if not isinstance(permissions, dict):
+        raise ValueError("permissions must be a mapping or shorthand")
     return permissions.get("id-token") == "write"
 
 
-def assert_oidc_jobs(directory):
+def validate_oidc_jobs(directory):
     grants = set()
     paths = sorted([*directory.glob("*.yml"), *directory.glob("*.yaml")])
-    assert paths, "no workflow files found"
+    if not paths:
+        raise ValueError("no workflow files found")
     for path in paths:
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         defaults = workflow.get("permissions", {})
-        assert not oidc_write(defaults), f"{path.name}: workflow-wide OIDC grant"
+        if oidc_write(defaults):
+            raise ValueError(f"{path.name}: workflow-wide OIDC grant")
         for name, job in workflow["jobs"].items():
             permissions = job.get("permissions", defaults)
-            assert permissions != "write-all", f"{path.name}/{name}: write-all grant"
+            if permissions == "write-all":
+                raise ValueError(f"{path.name}/{name}: write-all grant")
             if oidc_write(permissions):
                 grants.add((path.name, name))
-    assert grants == OIDC_JOBS, f"OIDC job drift: {grants ^ OIDC_JOBS}"
+    if grants != OIDC_JOBS:
+        raise ValueError(f"OIDC job drift: {grants ^ OIDC_JOBS}")
+    return grants
 
 
 class WorkflowOidcPermissionTests(unittest.TestCase):
     def test_real_workflow_grants(self):
-        assert_oidc_jobs(ROOT / ".github/workflows")
+        self.assertEqual(validate_oidc_jobs(ROOT / ".github/workflows"), OIDC_JOBS)
 
     def test_permission_drift_is_rejected(self):
         cases = (
             "validation-job", "workflow-inheritance", "workflow-write-all",
-            "shadowed-workflow-grant",
+            "shadowed-workflow-grant", "future-job-inheritance",
             "allowed-job-write-all", "other-job-write-all", "new-yml", "new-yaml",
             "removed-publisher", "removed-anchor", "removed-scorecard",
         )
@@ -54,12 +61,14 @@ class WorkflowOidcPermissionTests(unittest.TestCase):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 directory = Path(tmp) / "workflows"
                 shutil.copytree(ROOT / ".github/workflows", directory)
-                assert_oidc_jobs(directory)
+                self.assertEqual(validate_oidc_jobs(directory), OIDC_JOBS)
                 if case in {"new-yml", "new-yaml"}:
                     extension = case.removeprefix("new-")
                     (directory / f"unexpected.{extension}").write_text(
-                        "permissions: {contents: read}\njobs:\n"
-                        "  validation:\n    permissions: {id-token: write}\n",
+                        "name: Unexpected\non: push\npermissions: {contents: read}\njobs:\n"
+                        "  validation:\n    runs-on: ubuntu-latest\n"
+                        "    permissions: {id-token: write}\n"
+                        "    steps:\n      - run: echo validation\n",
                         encoding="utf-8",
                     )
                 else:
@@ -76,12 +85,17 @@ class WorkflowOidcPermissionTests(unittest.TestCase):
                     if case == "workflow-inheritance":
                         workflow["permissions"]["id-token"] = "write"
                         job.pop("permissions", None)
-                    elif case == "shadowed-workflow-grant":
+                    elif case in {"shadowed-workflow-grant", "future-job-inheritance"}:
                         # Even if every existing job narrows its permissions,
                         # a new job could inherit this broad default later.
                         workflow["permissions"]["id-token"] = "write"
                         for candidate in workflow["jobs"].values():
                             candidate["permissions"] = {"contents": "read"}
+                        if case == "future-job-inheritance":
+                            workflow["jobs"]["future-validation"] = {
+                                "runs-on": "ubuntu-latest",
+                                "steps": [{"run": "echo validation"}],
+                            }
                     elif case == "workflow-write-all":
                         workflow["permissions"] = "write-all"
                     elif case in {"allowed-job-write-all", "other-job-write-all"}:
@@ -91,18 +105,30 @@ class WorkflowOidcPermissionTests(unittest.TestCase):
                     else:
                         job.setdefault("permissions", {})["id-token"] = "write"
                     path.write_text(yaml.safe_dump(workflow), encoding="utf-8")
-                with self.assertRaises(AssertionError):
-                    assert_oidc_jobs(directory)
+                with self.assertRaises(ValueError):
+                    validate_oidc_jobs(directory)
 
     def test_read_only_inheritance_is_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / "workflows"
             shutil.copytree(ROOT / ".github/workflows", directory)
             (directory / "read-only.yaml").write_text(
-                "permissions: read-all\njobs:\n  validation:\n    runs-on: ubuntu-latest\n",
+                "name: Read only\non: push\npermissions: read-all\njobs:\n"
+                "  validation:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: echo validation\n",
                 encoding="utf-8",
             )
-            assert_oidc_jobs(directory)
+            self.assertEqual(validate_oidc_jobs(directory), OIDC_JOBS)
+
+    def test_empty_workflow_inventory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "no workflow files"):
+                validate_oidc_jobs(Path(tmp))
+
+    def test_invalid_permission_shapes_are_rejected(self):
+        for permissions in (None, [], 1, "unsupported"):
+            with self.subTest(permissions=permissions), self.assertRaises(ValueError):
+                oidc_write(permissions)
 
 
 if __name__ == "__main__":
