@@ -68,7 +68,7 @@ cbor2==6.1.5 \
     --hash=sha256:fd34b35b0a2b366f5b4bd53489ccd10d7576b0d4dd68db38ef64b4e617ea8f76 \
     --hash=sha256:fe81e4ff1b6bab72856d020dab89d86d4dcfbe18af4ff3fe2f391e1b03d0793c
     # via -r requirements/witness.in
-scitt-cose==0.4.0 \
-    --hash=sha256:2dead7e68ad937fd40a9c0409ac8e55e3373852bb0af0aa011b934ea03f8a9b9 \
-    --hash=sha256:7004f4a7bc1b64df36166afd3730e86be407d2663659d5e093a724d85fc8b7c5
+scitt-cose==0.4.2 \
+    --hash=sha256:5dc284e44739c07b3bc90ee3fe1186ef9fe9bfe90141a7528b4d3f64c5b6d073 \
+    --hash=sha256:b75d70a67ef2d232a3b9136c2bdd9915354b4f1b949214b563d885f487cb6797
     # via -r requirements/witness.in
