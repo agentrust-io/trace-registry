@@ -1,0 +1,27 @@
+{
+  "verified": true,
+  "checks": {
+    "checkpoint_structure": true,
+    "registry_identity": true,
+    "checkpoint_signature": true,
+    "checkpoint_receipt_binding": true,
+    "receipt_profile": true,
+    "receipt_signature_and_inclusion": true,
+    "response_coordinates": true
+  },
+  "limits": {
+    "witness_time_established": true,
+    "grade_cryptographically_bound": true,
+    "registry_continuity_established": false,
+    "full_checkpoint_envelope_witnessed": false
+  },
+  "checkpoint_signing_digest": "8b21417c8e533729461f2bfc6b6b1a95e554bf506e1a2f67a12d173dbc6cf22f",
+  "entry_hash": "df8e89a881c295a660b351960e7731c975624b7e4733cfcbf895521f7d9372ee",
+  "root": "9a835380c2472c3182df666ac66cee67723cde3dd932000c4b1ad80cb05ba4a5",
+  "leaf_index": 1,
+  "tree_size": 2,
+  "reported_grade": "mmr-verified",
+  "signed_iat": 1792467378,
+  "signed_grade": "mmr-verified",
+  "witness_key": "c7c47d073a2c8b348d12c7207aaf7a403f5a3c2695227bf8ed2963ff52f98baf"
+}
