@@ -38,13 +38,16 @@ mirror protects readers only against a rewrite after it first synced, and only w
 compares against it. A mirror run by the operator checks almost nothing. See [MIRRORS.md](MIRRORS.md) and
 [docs/mirroring.md](docs/mirroring.md).
 
-**One checkpoint has an independently operated witness receipt.**
+**Two checkpoints have witness receipts; one witness has a track record.**
 Checkpoint 1's signing-body digest is included under a root signed by Action State's witness key.
 The receipt returned on September 7, 2026 (Pacific time) verifies offline against an explicit
 key pin, and matches the separately fetched receipt. See
-[the evidence packet](docs/evidence/witness-2026-09-07/README.md).
+[the evidence packet](docs/evidence/witness-2026-09-07/README.md). On October 20, 2026, a second
+witness, operated by HORIZON SHIELD (which also runs a registered mirror), signed receipts for
+checkpoints 1 and 2. Its key was first published that day and its log holds only those two
+leaves. See [the second packet](docs/evidence/witness-2026-10-20-nenrin/README.md).
 
-This is a one-checkpoint demonstration, not continuous or reciprocal witnessing. It does not
+These are two demonstrations, not continuous or reciprocal witnessing. It does not
 prove registry continuity, prevent split views, cover the June entry, or prove payload retention.
 The JSON response reports `countersigned-observed`, but that grade is not signed inside this
 receipt, and this receipt signs a Merkle root without a witness timestamp: the checkpoint

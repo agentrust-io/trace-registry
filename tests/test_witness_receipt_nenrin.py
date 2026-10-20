@@ -77,5 +77,25 @@ class NenrinWitnessReceiptTests(unittest.TestCase):
         self.assertFalse(result['limits']['grade_cryptographically_bound'])
 
 
+    def test_bitcoin_anchor_chain_offline(self):
+        import hashlib
+        head = (PACKET / 'witness-tree-heads.ndjson').read_bytes().split(b'\n')[0]
+        head_sha = hashlib.sha256(head).hexdigest()
+        self.assertEqual(head_sha, 'aaf55bf7163e08c30fa22b4cf0dfe13bbbc37f6876c6c66fff5b0f776b90ef8d')
+        record = (PACKET / 'jidec-127.txt').read_bytes()
+        self.assertIn(head_sha.encode(), record)
+        self.assertIn(WITNESS_KEY.encode(), record)
+        claim = hashlib.sha256(record).digest()
+        self.assertEqual(claim.hex(), '6d8ff0fbc1e2d3d0e3ef2e03b22be891c0cd380dba80d16153861894ec4ced67')
+        proof = (PACKET / 'jidec-127.txt.ots').read_bytes()
+        magic = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+        self.assertTrue(proof.startswith(magic))
+        # version 1, file hash op sha256 (0x08), then the 32-byte digest the proof commits to
+        self.assertEqual(proof[len(magic):len(magic) + 2], b'\x01\x08')
+        self.assertEqual(proof[len(magic) + 2:len(magic) + 34], claim)
+        # the Bitcoin attestation: its tag, a 3-byte payload, height 972264 as a varint
+        self.assertIn(bytes.fromhex('0588960d73d71901' '03' 'e8ab3b'), proof)
+
+
 if __name__ == '__main__':
     unittest.main()
