@@ -831,5 +831,57 @@ class TestPackagedWitnessVerifier(unittest.TestCase):
         self.assertFalse(result["limits"]["grade_cryptographically_bound"])
 
 
+class TestAnchorProfileInCanonicalClaimBytes(unittest.TestCase):
+    """registry-anchor-v1 section 1 rules enforced in canonical_claim_bytes
+    and anchor_profile_violation across trace_verify and tools (#146)."""
+
+    def test_anchor_profile_violation_rejects_unpaired_surrogates_and_tuples(self):
+        from trace_verify._verify import anchor_profile_violation
+        import verify_inclusion as vi
+
+        for fn in (anchor_profile_violation, vi.anchor_profile_violation):
+            self.assertIsNotNone(fn({"s": "\ud800"}))
+            self.assertIn("surrogate", fn({"s": "\ud800"}))
+            self.assertIsNotNone(fn({"nested": ("\udfff",)}))
+            self.assertIn("surrogate", fn({"nested": ("\udfff",)}))
+            self.assertIsNotNone(fn({"\ud800key": 1}))
+            self.assertIn("surrogate", fn({"\ud800key": 1}))
+            self.assertIsNotNone(fn({1: "val"}))  # type: ignore[dict-item]
+            self.assertIsNone(fn({"valid": ("ok", 1, -1, True, None)}))
+
+    def test_canonical_claim_bytes_rejects_floats_unsafe_ints_and_surrogates(self):
+        import verify_inclusion as vi
+        import batch_anchor
+
+        bad_claims = (
+            {"score": 1.5},
+            {"n": 2**53},
+            {"n": -(2**53)},
+            {"s": "\ud800"},
+            {"\udfff": "v"},
+            {"tuple_float": (1.25,)},
+        )
+        for bad in bad_claims:
+            with self.subTest(claim=bad):
+                with self.assertRaises(ValueError):
+                    canonical_claim_bytes(bad)
+                with self.assertRaises(ValueError):
+                    vi.canonical_claim_bytes(bad)
+                with self.assertRaises(ValueError):
+                    anchor.canonical_claim_bytes(bad)
+                with self.assertRaises(ValueError):
+                    batch_anchor._canonical_claim_bytes(b"{}", bad)
+
+    def test_verify_inclusion_raises_on_out_of_profile_claim(self):
+        import verify_inclusion as vi
+
+        for bad in ({"score": 1.5}, {"s": "\ud800"}, {"n": 2**53}):
+            with self.subTest(claim=bad):
+                with self.assertRaises(ValueError):
+                    verify_inclusion(bad, 0, [], 1, b"\x00" * 32)
+                with self.assertRaises(ValueError):
+                    vi.verify_inclusion(bad, 0, [], 1, b"\x00" * 32)
+
+
 if __name__ == "__main__":
     unittest.main()
