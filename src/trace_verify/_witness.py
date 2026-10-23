@@ -125,11 +125,8 @@ def signing_body_digest(body):
 
 
 def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
-    import cbor2
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from scitt_cose.receipt import verify_receipt
-    from scitt_cose.cose_sign1 import strict_decode
 
     result = {'verified': False, 'checks': {}, 'limits': {
         'witness_time_established': False,
@@ -195,6 +192,9 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
             raise ValueError('receipt response is not bound to this checkpoint signing body')
         checks['checkpoint_receipt_binding'] = True
         receipt = base64.b64decode(response['receipt_b64'], validate=True)
+        import cbor2
+        from scitt_cose.receipt import verify_receipt
+        from scitt_cose.cose_sign1 import strict_decode
         # Restrict this adapter to the observed, reviewed stage-1 profile.
         # New algorithms, signed metadata or proof structures need review.
         decoded = strict_decode(receipt)
