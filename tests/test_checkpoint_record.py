@@ -69,6 +69,50 @@ class TestCheckpointRecord(unittest.TestCase):
         self.assertIsNone(cp.consistency_proof)
         self.assertNotIn("consistency_proof", cp.to_dict())
 
+    def test_non_canonical_hex_and_unknown_fields_rejected(self):
+        from trace_verify._checkpoint import verify_checkpoint_chain
+
+        cp = _signed_checkpoint()
+        d = cp.to_dict()
+        for bad_dict in (
+            {**d, "extra_field": 1},
+            {123: "non_string_key", **d},
+            {**d, "v": 2},
+            {**d, "kind": "wrong_kind"},
+            {**d, "mmr_size": 0},
+            {**d, "mmr_size": 5, "prev_size": 5},
+            {**d, "prev_size": 1, "prev_root": "bb" * 32},  # missing consistency_proof
+            {**d, "prev_root": "bb" * 32},  # prev_size == 0 with non-empty prev_root
+            {**d, "root": "AA" * 32},
+            {**d, "key_id": "AA" * 32},
+            {**d, "signature": d["signature"].upper()},
+        ):
+            with self.subTest(bad_dict=list(bad_dict.keys())):
+                with self.assertRaises(ValueError):
+                    CheckpointRecord.from_dict(bad_dict)
+
+        # Uppercase or whitespace-padded signature or bad v/kind/mmr_size must not verify
+        for bad_cp in (
+            _signed_checkpoint(v=2),
+            _signed_checkpoint(kind="other"),
+            _signed_checkpoint(mmr_size=0),
+            _signed_checkpoint(mmr_size=3, prev_size=3, prev_root="bb" * 32),
+            _signed_checkpoint(root="AA" * 32),
+        ):
+            self.assertFalse(verify_checkpoint_signature_offline(bad_cp))
+            ok, errs = verify_checkpoint_chain([bad_cp])
+            self.assertFalse(ok)
+            self.assertTrue(errs)
+
+        upper_sig = _signed_checkpoint()
+        upper_sig.signature = upper_sig.signature.upper()
+        self.assertFalse(verify_checkpoint_signature_offline(upper_sig))
+
+        padded_sig = _signed_checkpoint()
+        padded_sig.signature = "  " + padded_sig.signature + "  "
+        self.assertFalse(verify_checkpoint_signature_offline(padded_sig))
+
+
 
 if __name__ == "__main__":
     unittest.main()
