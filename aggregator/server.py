@@ -68,7 +68,10 @@ class AggregatorHandler(BaseHTTPRequestHandler):
             raise _BodyError(400, "Content-Length is required")
         if not raw_length.isascii() or not raw_length.isdecimal():
             raise _BodyError(400, "Content-Length is not a non-negative integer")
-        length = int(raw_length)
+        try:
+            length = int(raw_length)
+        except ValueError:
+            raise _BodyError(413, f"body exceeds {MAX_BODY_BYTES} bytes") from None
         if length > MAX_BODY_BYTES:
             raise _BodyError(413, f"body exceeds {MAX_BODY_BYTES} bytes")
         if length == 0:
@@ -87,9 +90,12 @@ class AggregatorHandler(BaseHTTPRequestHandler):
             raw_claims = body.get("claims")
             if not isinstance(raw_claims, list) or not raw_claims:
                 raise ValueError("'claims' must be a non-empty list")
-            producer = body.get("producer")
-            if producer is not None and (not isinstance(producer, str) or not producer):
-                raise ValueError("'producer' must be a non-empty string when present")
+            if "producer" in body:
+                producer = body["producer"]
+                if not isinstance(producer, str) or not producer:
+                    raise ValueError("'producer' must be a non-empty string when present")
+            else:
+                producer = None
 
             if canonicalization_id == "as-transmitted":
                 # Each element is the producer's exact signed claim text --
