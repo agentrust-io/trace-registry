@@ -69,6 +69,25 @@ class TestCheckpointRecord(unittest.TestCase):
         self.assertIsNone(cp.consistency_proof)
         self.assertNotIn("consistency_proof", cp.to_dict())
 
+    def test_non_canonical_hex_and_unknown_fields_rejected(self):
+        cp = _signed_checkpoint()
+        d = cp.to_dict()
+        with self.assertRaises(ValueError):
+            CheckpointRecord.from_dict({**d, "extra_field": 1})
+
+        # Uppercase or whitespace-padded signature must not verify
+        upper_sig = _signed_checkpoint()
+        upper_sig.signature = upper_sig.signature.upper()
+        self.assertFalse(verify_checkpoint_signature_offline(upper_sig))
+
+        padded_sig = _signed_checkpoint()
+        padded_sig.signature = "  " + padded_sig.signature + "  "
+        self.assertFalse(verify_checkpoint_signature_offline(padded_sig))
+
+        upper_root = _signed_checkpoint(root="AA" * 32)
+        self.assertFalse(verify_checkpoint_signature_offline(upper_root))
+
+
 
 if __name__ == "__main__":
     unittest.main()
