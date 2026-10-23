@@ -87,6 +87,11 @@ class MismatchedCanonicalizationLayerError(ValueError):
 def _canonical_claim_bytes(
     raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
 ) -> bytes:
+    if not isinstance(canonicalization_id, str):
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -98,9 +103,19 @@ def _canonical_claim_bytes(
     if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        if not isinstance(claim, dict):
+            raise ValueError("claim must be a JSON object")
+        from trace_verify._verify import anchor_profile_violation
+
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"

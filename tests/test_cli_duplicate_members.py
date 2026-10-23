@@ -55,6 +55,58 @@ class DuplicateMemberTests(unittest.TestCase):
         self.assertEqual(first_wins["cmcp_version"], "EVIL-9.9")
         self.assertNotEqual(json.loads(raw)["cmcp_version"], "EVIL-9.9")
 
+    def test_standalone_tools_reject_duplicated_members(self):
+        """tools/verify_inclusion.py, tools/verify_checkpoint_chain.py,
+        tools/validate_registry.py, and tools/validate_producers.py must all
+        refuse duplicate JSON member names (#146)."""
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            dup_claim = _with_duplicate(tmp)
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "verify_inclusion.py"),
+                    "--claim", str(dup_claim),
+                    "--proof", "samples/inclusion-proof.json",
+                    "--entry", "registry/2026/06/12.ndjson",
+                ],
+                cwd=REPO_ROOT, capture_output=True, text=True,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("duplicate JSON member name", proc.stderr)
+
+            # Duplicate member in registry day file for verify_checkpoint_chain & validate_registry
+            entry_line = (REPO_ROOT / "registry" / "2026" / "09" / "01.ndjson").read_text(
+                encoding="utf-8"
+            ).splitlines()[0]
+            dup_entry_line = '{"batch_id": "dup", ' + entry_line[1:]
+            reg_dir = tmp / "registry" / "2026" / "09"
+            reg_dir.mkdir(parents=True)
+            dup_ndjson = reg_dir / "01.ndjson"
+            dup_ndjson.write_text(dup_entry_line + "\n", encoding="utf-8")
+
+            chain_proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "verify_checkpoint_chain.py"),
+                    str(dup_ndjson),
+                ],
+                cwd=REPO_ROOT, capture_output=True, text=True,
+            )
+            self.assertNotEqual(chain_proc.returncode, 0)
+            self.assertIn("duplicate JSON member name", chain_proc.stderr)
+
+            val_reg_proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "validate_registry.py"),
+                    str(tmp / "registry"),
+                ],
+                cwd=REPO_ROOT, capture_output=True, text=True,
+            )
+            self.assertNotEqual(val_reg_proc.returncode, 0)
+            self.assertIn("duplicate JSON member name", val_reg_proc.stdout + val_reg_proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

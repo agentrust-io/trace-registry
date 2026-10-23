@@ -39,7 +39,6 @@ to exit 0 explicitly; it does not bypass verification of existing checkpoints.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -47,11 +46,12 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from trace_verify._checkpoint import (
+from trace_verify._checkpoint import (  # noqa: E402
     CheckpointRecord,
     verify_chain_against_entries,
     verify_checkpoint_chain,
 )
+from trace_verify._verify import loads_unique  # noqa: E402
 
 
 def _load_entries(paths: list[Path]) -> list[dict]:
@@ -61,7 +61,7 @@ def _load_entries(paths: list[Path]) -> list[dict]:
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
+                entry = loads_unique(line)
             except (ValueError, RecursionError) as exc:
                 raise SystemExit(f"error: {path}:{lineno}: invalid JSON: {exc}")
             if not isinstance(entry, dict):

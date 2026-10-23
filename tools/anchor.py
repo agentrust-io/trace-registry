@@ -94,6 +94,11 @@ def canonical_claim_bytes(
       Requires ``raw_bytes``; omitting it is a caller error, not a silent
       fallback to some other construction.
     """
+    if not isinstance(canonicalization_id, str):
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -113,9 +118,19 @@ def canonical_claim_bytes(
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
             raise ValueError("claim must be a JSON object")
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        if str(REPO_ROOT / "src") not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT / "src"))
+        from trace_verify._verify import anchor_profile_violation
+
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"

@@ -105,5 +105,96 @@ class TestConsistencyRoundTrip(unittest.TestCase):
         self.assertFalse(core.verify_consistency(b"bad", 0, b"bad", 0, None))
 
 
+class TestExactIntRejectionInMmr(unittest.TestCase):
+    """bool, str, and float must be rejected in proof deserialization, proof
+    builders, and verifiers (#146)."""
+
+    def test_from_dict_rejects_bool_str_and_float_ints(self):
+        store = _grow(3)
+        size = store.size()
+        inc = core.inclusion_proof(store, 0, size).to_dict()
+        con = core.consistency_proof(store, 1, size).to_dict()
+
+        for field in ("v", "size", "leaf_index"):
+            for bad in (True, False, "1", "0", 1.0, 0.0):
+                with self.subTest(kind="inclusion", field=field, bad=bad):
+                    with self.assertRaises(core.InvalidArgumentError):
+                        core.InclusionProof.from_dict({**inc, field: bad})
+
+        for field in ("v", "size_a", "size_b"):
+            for bad in (True, False, "1", "0", 1.0, 0.0):
+                with self.subTest(kind="consistency", field=field, bad=bad):
+                    with self.assertRaises(core.InvalidArgumentError):
+                        core.ConsistencyProof.from_dict({**con, field: bad})
+
+        for field in ("witness", "peaks_left", "peaks_right"):
+            with self.assertRaises(core.InvalidArgumentError):
+                core.InclusionProof.from_dict({**inc, field: "not-a-list"})
+
+        for field in ("old_peaks", "witness", "new_peaks"):
+            with self.assertRaises(core.InvalidArgumentError):
+                core.ConsistencyProof.from_dict({**con, field: "not-a-list"})
+
+    def test_verifiers_and_builders_reject_booleans_and_floats(self):
+        store = _grow(1)  # size == 1, leaf_index == 0 (matches True == 1, False == 0)
+        root = core.root_from_peaks([store.node(p) for p in core.peaks(1)])
+        digest = _digest("entry-0")
+        inc = core.inclusion_proof(store, 0, 1)
+        con = core.consistency_proof(store, 1, 1)
+
+        self.assertTrue(core.verify_inclusion(root, 1, 0, digest, inc))
+        self.assertFalse(core.verify_inclusion(root, True, 0, digest, inc))
+        self.assertFalse(core.verify_inclusion(root, 1, False, digest, inc))
+        self.assertFalse(
+            core.verify_inclusion(
+                root, 1, 0, digest,
+                core.InclusionProof(True, "inclusion", 1, 0, inc.witness, inc.peaks_left, inc.peaks_right),
+            )
+        )
+        self.assertFalse(
+            core.verify_inclusion(
+                root, 1, 0, digest,
+                core.InclusionProof(1, "inclusion", True, 0, inc.witness, inc.peaks_left, inc.peaks_right),
+            )
+        )
+        self.assertFalse(
+            core.verify_inclusion(
+                root, 1, 0, digest,
+                core.InclusionProof(1, "inclusion", 1, False, inc.witness, inc.peaks_left, inc.peaks_right),
+            )
+        )
+
+        self.assertTrue(core.verify_consistency(root, 1, root, 1, con))
+        self.assertFalse(core.verify_consistency(root, True, root, 1, con))
+        self.assertFalse(core.verify_consistency(root, 1, root, True, con))
+        self.assertFalse(
+            core.verify_consistency(
+                root, 1, root, 1,
+                core.ConsistencyProof(True, "consistency", 1, 1, con.old_peaks, con.witness, con.new_peaks),
+            )
+        )
+        self.assertFalse(
+            core.verify_consistency(
+                root, 1, root, 1,
+                core.ConsistencyProof(1, "consistency", True, 1, con.old_peaks, con.witness, con.new_peaks),
+            )
+        )
+        self.assertFalse(
+            core.verify_consistency(
+                root, 1, root, 1,
+                core.ConsistencyProof(1, "consistency", 1, True, con.old_peaks, con.witness, con.new_peaks),
+            )
+        )
+
+        with self.assertRaises(core.InvalidArgumentError):
+            core.inclusion_proof(store, False, 1)
+        with self.assertRaises(core.InvalidArgumentError):
+            core.inclusion_proof(store, 0, True)
+        with self.assertRaises(core.InvalidArgumentError):
+            core.consistency_proof(store, True, 1)
+        with self.assertRaises(core.InvalidArgumentError):
+            core.consistency_proof(store, 1, True)
+
+
 if __name__ == "__main__":
     unittest.main()

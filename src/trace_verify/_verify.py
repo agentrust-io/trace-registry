@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from typing import Any
 
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
@@ -124,9 +125,15 @@ def canonical_claim_bytes(
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
             raise ValueError("claim must be a JSON object")
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
@@ -136,7 +143,11 @@ def canonical_claim_bytes(
 SAFE_INTEGER_MAX = 2**53 - 1
 
 
-def loads_unique(raw: bytes | str) -> object:
+def _has_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
+
+
+def loads_unique(raw: bytes | str) -> Any:
     """``json.loads`` that refuses duplicate member names.
 
     Plain ``json.loads`` keeps the last value for a repeated name, so a claim
@@ -162,15 +173,28 @@ def anchor_profile_violation(claim: object) -> str | None:
     Section 1: a claim is a JSON object of strings, integers, booleans,
     nulls, arrays and objects. Non-integer numbers and integers outside
     -(2^53-1)..2^53-1 are excluded, because implementations of the sorted-key
-    construction in different languages serialize them differently. The walk
-    is iterative so a deeply nested claim cannot raise RecursionError here.
+    construction in different languages serialize them differently. Unpaired
+    UTF-16 surrogates (U+D800..U+DFFF) are not Unicode scalar values and are
+    likewise excluded. The walk is iterative so a deeply nested claim cannot
+    raise RecursionError here.
     """
     if not isinstance(claim, dict):
         return "claim is not a JSON object"
-    stack: list[tuple[object, str]] = [(claim, "$")]
+    active: set[int] = set()
+    stack: list[tuple[object, str, bool]] = [(claim, "$", False)]
     while stack:
-        value, where = stack.pop()
-        if value is None or isinstance(value, (bool, str)):
+        value, where, exiting = stack.pop()
+        if exiting:
+            active.discard(id(value))
+            continue
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, str):
+            if _has_surrogate(value):
+                return (
+                    f"unpaired UTF-16 surrogate in string at {where} "
+                    "(registry-anchor-v1 section 1)"
+                )
             continue
         if isinstance(value, int):
             if not -SAFE_INTEGER_MAX <= value <= SAFE_INTEGER_MAX:
@@ -185,9 +209,27 @@ def anchor_profile_violation(claim: object) -> str | None:
                 "admits integers only (registry-anchor-v1 section 1)"
             )
         elif isinstance(value, dict):
-            stack.extend((v, f"{where}.{k}") for k, v in value.items())
-        elif isinstance(value, list):
-            stack.extend((v, f"{where}[{i}]") for i, v in enumerate(value))
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
+            for k, v in value.items():
+                if not isinstance(k, str):
+                    return f"non-string object key {type(k).__name__} at {where}"
+                if _has_surrogate(k):
+                    return (
+                        f"unpaired UTF-16 surrogate in object key at {where}.{k!r} "
+                        "(registry-anchor-v1 section 1)"
+                    )
+                stack.append((v, f"{where}.{k}", False))
+        elif isinstance(value, (list, tuple)):
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
+            stack.extend((v, f"{where}[{i}]", False) for i, v in enumerate(value))
         else:
             return f"unsupported value type {type(value).__name__} at {where}"
     return None
