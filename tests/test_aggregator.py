@@ -558,6 +558,64 @@ class TestHTTPServer(unittest.TestCase):
             server.shutdown()
         self.assertEqual(status, 404)
 
+    def test_non_decimal_content_length_and_non_string_producer_rejected(self):
+        import http.client
+        import io
+        from aggregator._mmr_log import CheckpointLog
+        from aggregator.server import AggregatorHandler, _BodyError
+
+        dummy_handler = object.__new__(AggregatorHandler)
+        dummy_handler.headers = {"Content-Length": "\u0662"}
+        dummy_handler.rfile = io.BytesIO(b"{}")
+        with self.assertRaises(_BodyError) as ctx:
+            dummy_handler._read_json_body()
+        self.assertEqual(ctx.exception.status, 400)
+
+        dummy_handler.headers = {"Content-Length": "0"}
+        dummy_handler.rfile = io.BytesIO(b"")
+        self.assertIsNone(dummy_handler._read_json_body())
+
+        dummy_handler.headers = {"Content-Length": "002"}
+        dummy_handler.rfile = io.BytesIO(b"{}")
+        self.assertEqual(dummy_handler._read_json_body(), {})
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            server, port = self._start_server(tmp)
+            try:
+                for bad_cl in ("+2", "1_0", " 2 ", "\u00b2"):
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                    conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+                    conn.putheader("Content-Length", bad_cl)
+                    conn.endheaders()
+                    self.assertEqual(conn.getresponse().status, 400)
+                    conn.close()
+
+                for bad_prod in (None, "", 123, ["p/1.0.0"], {"id": "p"}):
+                    status, _ = self._post(
+                        port,
+                        {"producer": bad_prod, "claims": [{"hash": "sha256:" + "0" * 64}]},
+                    )
+                    self.assertEqual(status, 400)
+
+                # Huge digit Content-Length returns 413 cleanly
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+                conn.putheader("Content-Length", "9" * 5000)
+                conn.endheaders()
+                self.assertEqual(conn.getresponse().status, 413)
+                conn.close()
+            finally:
+                server.shutdown()
+
+            for idx, bad_cp_text in enumerate(('{"v": 1, "v": 2}', '{"v": NaN}', '{"v": Infinity}')):
+                cp_dir = tmp / f"cp_bad_{idx}"
+                cp_dir.mkdir(parents=True, exist_ok=True)
+                (cp_dir / "latest-checkpoint.json").write_text(bad_cp_text, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    CheckpointLog(cp_dir)
+
+
 
 class TestHTTPServerAsTransmitted(unittest.TestCase):
     """PR-2 over the wire: POST /batch with canonicalization_id='as-transmitted'
