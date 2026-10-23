@@ -123,6 +123,29 @@ class WitnessReceiptTests(unittest.TestCase):
         self.response['receipt_b64'] = base64.b64encode(receipt).decode()
         self.assertFalse(self.check()['verified'])
 
+    def test_non_canonical_hex_signature_or_keys_and_nonfinite_json_rejected(self):
+        import tempfile
+
+        for bad_sig in (self.cp['signature'].upper(), '  ' + self.cp['signature']):
+            cp = copy.deepcopy(self.cp)
+            cp['signature'] = bad_sig
+            res = self.check(cp=cp)
+            self.assertFalse(res['verified'])
+            self.assertNotIn('checkpoint_signature', res['checks'])
+
+        self.assertFalse(self.check(witness_key=WITNESS_KEY.upper())['verified'])
+        self.assertFalse(self.check(registry_key=REGISTRY_KEY.upper())['verified'])
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as fh:
+            fh.write('{"x": NaN}')
+            tmp = Path(fh.name)
+        try:
+            with self.assertRaises(ValueError):
+                load_json(tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
 
 if __name__ == '__main__':
     unittest.main()
