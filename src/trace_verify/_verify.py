@@ -180,9 +180,13 @@ def anchor_profile_violation(claim: object) -> str | None:
     """
     if not isinstance(claim, dict):
         return "claim is not a JSON object"
-    stack: list[tuple[object, str]] = [(claim, "$")]
+    active: set[int] = set()
+    stack: list[tuple[object, str, bool]] = [(claim, "$", False)]
     while stack:
-        value, where = stack.pop()
+        value, where, exiting = stack.pop()
+        if exiting:
+            active.discard(id(value))
+            continue
         if value is None or isinstance(value, bool):
             continue
         if isinstance(value, str):
@@ -205,6 +209,11 @@ def anchor_profile_violation(claim: object) -> str | None:
                 "admits integers only (registry-anchor-v1 section 1)"
             )
         elif isinstance(value, dict):
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
             for k, v in value.items():
                 if not isinstance(k, str):
                     return f"non-string object key {type(k).__name__} at {where}"
@@ -213,9 +222,14 @@ def anchor_profile_violation(claim: object) -> str | None:
                         f"unpaired UTF-16 surrogate in object key at {where}.{k!r} "
                         "(registry-anchor-v1 section 1)"
                     )
-                stack.append((v, f"{where}.{k}"))
+                stack.append((v, f"{where}.{k}", False))
         elif isinstance(value, (list, tuple)):
-            stack.extend((v, f"{where}[{i}]") for i, v in enumerate(value))
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
+            stack.extend((v, f"{where}[{i}]", False) for i, v in enumerate(value))
         else:
             return f"unsupported value type {type(value).__name__} at {where}"
     return None

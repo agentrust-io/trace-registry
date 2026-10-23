@@ -849,6 +849,20 @@ class TestAnchorProfileInCanonicalClaimBytes(unittest.TestCase):
             self.assertIsNotNone(fn({1: "val"}))  # type: ignore[dict-item]
             self.assertIsNone(fn({"valid": ("ok", 1, -1, True, None)}))
 
+            # Shared-but-acyclic objects are permitted
+            shared_dict = {"k": 1}
+            shared_list = [1, 2]
+            self.assertIsNone(fn({"a": shared_dict, "b": shared_dict, "c": [shared_list, shared_list]}))
+
+            # Cyclic dicts and lists are rejected with a clear error
+            cyc_dict: dict = {}
+            cyc_dict["self"] = cyc_dict
+            self.assertIn("circular reference", fn(cyc_dict) or "")
+            cyc_list: list = []
+            cyc_list.append(cyc_list)
+            self.assertIn("circular reference", fn({"lst": cyc_list}) or "")
+
+
     def test_canonical_claim_bytes_rejects_floats_unsafe_ints_and_surrogates(self):
         import verify_inclusion as vi
         import batch_anchor
