@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import check_mirrors
 
 
-CANONICAL_SHA = "abc123def456abc123def456abc123def456abc123"
+CANONICAL_SHA = "abc123def456abc123def456abc123def456abc1"
 MIRROR_SHA_SYNC = CANONICAL_SHA
 MIRROR_SHA_BEHIND = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
@@ -275,9 +275,50 @@ class TestGetHeadSha(unittest.TestCase):
                 check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
 
     def test_too_short_sha_raises(self):
-        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "abc"}):
+        for short_sha in ("abc", "a" * 7, "a" * 39):
+            with patch.object(check_mirrors, "_fetch_json", return_value={"sha": short_sha}):
+                with self.assertRaises(ValueError):
+                    check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+
+    def test_uppercase_sha_normalised_and_64_hex_accepted(self):
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "A" * 40}):
+            sha40 = check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+        self.assertEqual(sha40, "a" * 40)
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "B" * 64}):
+            sha64 = check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+        self.assertEqual(sha64, "b" * 64)
+
+    def test_non_hex_sha_raises(self):
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "z" * 40}):
             with self.assertRaises(ValueError):
                 check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+
+    def test_duplicate_keys_and_nonfinite_json_rejected(self):
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": "aaaaaaa", "sha": "bbbbbbb"}')
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": NaN}')
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": Infinity}')
+
+    def test_redirect_handler_rejects_disallowed_host_or_http(self):
+        handler = check_mirrors._make_redirect_handler(frozenset({"api.github.com"}))
+        import urllib.request
+
+        req = urllib.request.Request("https://api.github.com/repos/x/y/commits/HEAD")
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "https://evil.example.com/commits/HEAD"
+            )
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "http://api.github.com/repos/x/y/commits/HEAD"
+            )
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "https://mirror.example.org/commits/HEAD"
+            )
+
 
 
 if __name__ == "__main__":
