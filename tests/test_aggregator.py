@@ -558,6 +558,40 @@ class TestHTTPServer(unittest.TestCase):
             server.shutdown()
         self.assertEqual(status, 404)
 
+    def test_non_decimal_content_length_and_non_string_producer_rejected(self):
+        import http.client
+        from aggregator._mmr_log import CheckpointLog
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            server, port = self._start_server(tmp)
+            try:
+                for bad_cl in ("+2", "1_0", " 2 ", "\u00b2"):
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                    conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+                    conn.putheader("Content-Length", bad_cl)
+                    conn.endheaders()
+                    self.assertEqual(conn.getresponse().status, 400)
+                    conn.close()
+
+                for bad_prod in ("", 123, ["p/1.0.0"], {"id": "p"}):
+                    status, _ = self._post(
+                        port,
+                        {"producer": bad_prod, "claims": [{"hash": "sha256:" + "0" * 64}]},
+                    )
+                    self.assertEqual(status, 400)
+            finally:
+                server.shutdown()
+
+            cp_dir = tmp / "cp_dup"
+            cp_dir.mkdir(parents=True, exist_ok=True)
+            (cp_dir / "latest-checkpoint.json").write_text(
+                '{"v": 1, "v": 2}', encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                CheckpointLog(cp_dir)
+
+
 
 class TestHTTPServerAsTransmitted(unittest.TestCase):
     """PR-2 over the wire: POST /batch with canonicalization_id='as-transmitted'
