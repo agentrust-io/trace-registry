@@ -279,6 +279,30 @@ class TestGetHeadSha(unittest.TestCase):
             with self.assertRaises(ValueError):
                 check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
 
+    def test_non_hex_sha_or_redirect_or_duplicate_keys_rejected(self):
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "z" * 40}):
+            with self.assertRaises(ValueError):
+                check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": "aaaaaaa", "sha": "bbbbbbb"}')
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": NaN}')
+
+        handler = check_mirrors._make_redirect_handler(frozenset({"api.github.com"}))
+        import urllib.request
+
+        req = urllib.request.Request("https://api.github.com/repos/x/y/commits/HEAD")
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "https://evil.example.com/commits/HEAD"
+            )
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "http://api.github.com/repos/x/y/commits/HEAD"
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
