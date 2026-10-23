@@ -106,9 +106,6 @@ def _loads_strict(raw):
     return json.loads(text, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
 
 
-_ORIG_URLOPEN = urllib.request.urlopen
-
-
 def _make_redirect_handler(allowed_hosts):
     class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -124,7 +121,11 @@ def _make_redirect_handler(allowed_hosts):
     return _AllowlistRedirectHandler()
 
 
-def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
+def _build_opener(allowed_hosts):
+    return urllib.request.build_opener(_make_redirect_handler(allowed_hosts))
+
+
+def request(url, allowed_hosts, *, timeout, body=None, content_type=None, opener=None):
     """Perform one request and return an observation of what came back.
 
     Never raises for an HTTP error status or a transport failure. The caller
@@ -140,11 +141,12 @@ def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
     req = urllib.request.Request(url, data=body, headers=headers,
                                  method='POST' if body is not None else 'GET')
     observation = {'method': req.get_method(), 'url': url}
-    open_fn = (
-        urllib.request.build_opener(_make_redirect_handler(allowed_hosts)).open
-        if urllib.request.urlopen is _ORIG_URLOPEN
-        else urllib.request.urlopen
-    )
+    if opener is not None:
+        open_fn = opener.open if hasattr(opener, 'open') else opener
+    elif getattr(urllib.request.urlopen, '__module__', '') == 'urllib.request':
+        open_fn = _build_opener(allowed_hosts).open
+    else:
+        open_fn = urllib.request.urlopen
     try:
         with open_fn(req, timeout=timeout) as response:
             observation['status'] = response.status

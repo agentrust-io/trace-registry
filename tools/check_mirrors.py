@@ -41,7 +41,7 @@ UA = "trace-registry/check-mirrors (github.com/agentrust-io/trace-registry)"
 # hosts and is extended at runtime with the hosts already configured in
 # mirrors.json. file://, http://, and internal/metadata targets are rejected.
 _BASE_ALLOWED_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
-_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
 
 
 def _loads_strict(text: str) -> dict:
@@ -119,11 +119,12 @@ def _fetch_json(url: str, timeout: int, allowed_hosts: frozenset) -> dict:
 
 def _get_head_sha(api_url: str, timeout: int, allowed_hosts: frozenset) -> str:
     """Fetch the HEAD commit SHA from a mirror's API endpoint."""
-    data = _fetch_json(api_url, timeout, allowed_hosts)
+    per_endpoint_hosts = frozenset({_host_of(api_url)}) & allowed_hosts
+    data = _fetch_json(api_url, timeout, per_endpoint_hosts or allowed_hosts)
     sha = data.get("sha")
     if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha):
         raise ValueError(f"unexpected response shape: {list(data.keys())}")
-    return sha
+    return sha.lower()
 
 
 def _load_mirrors() -> dict:
@@ -159,9 +160,6 @@ def _check_one(entry: dict, canonical_sha: str, timeout: int, allowed_hosts: fro
     result["canonical_sha"] = canonical_sha
 
     if mirror_sha == canonical_sha:
-        result["status"] = "in_sync"
-    elif canonical_sha.startswith(mirror_sha) or mirror_sha.startswith(canonical_sha):
-        # abbreviated SHA match
         result["status"] = "in_sync"
     else:
         result["status"] = "diverged"

@@ -393,6 +393,67 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
         self.assertIn("missing signed field", str(ctx.exception))
         self.assertIn("root", str(ctx.exception))
 
+    def test_request_rejects_redirects_to_http_or_disallowed_hosts(self):
+        import email.message
+        import io
+        import urllib.request
+        import urllib.response
+
+        allowed_url = "https://witness.agentactioncapsule.org/v1/inclusion/abc"
+        allowed_hosts = frozenset({"witness.agentactioncapsule.org"})
+
+        for target in (
+            "http://witness.agentactioncapsule.org/v1/inclusion/abc",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://evil.example/inclusion",
+        ):
+            class FakeRedirectNetwork(urllib.request.BaseHandler):
+                handler_order = 100
+
+                def https_open(self, req):
+                    headers = email.message.Message()
+                    if req.full_url == allowed_url:
+                        headers["Location"] = target
+                        resp = urllib.response.addinfourl(
+                            io.BytesIO(b""), headers, req.full_url, 302
+                        )
+                        resp.msg = "Found"
+                        return resp
+                    resp = urllib.response.addinfourl(
+                        io.BytesIO(b'{"receipt_b64":"ok"}'), headers, req.full_url, 200
+                    )
+                    resp.msg = "OK"
+                    return resp
+
+                def http_open(self, req):
+                    headers = email.message.Message()
+                    resp = urllib.response.addinfourl(
+                        io.BytesIO(b'{"receipt_b64":"ok"}'), headers, req.full_url, 200
+                    )
+                    resp.msg = "OK"
+                    return resp
+
+            opener = urllib.request.build_opener(
+                FakeRedirectNetwork, cwr._make_redirect_handler(allowed_hosts)
+            )
+            obs = cwr.request(allowed_url, allowed_hosts, timeout=5, opener=opener)
+            self.assertEqual(obs["status"], 302, target)
+
+    def test_duplicate_keys_and_nonfinite_json_rejected_in_capture_helpers(self):
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","receipt_b64":"b"}'))
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","x":NaN}'))
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","x":Infinity}'))
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dup.ndjson"
+            p.write_text('{"batch_id":"b1","batch_id":"b2","mmr_checkpoint":{}}\n', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                cwr.checkpoint_from_registry_entry(p)
+            nan_p = Path(tmp) / "nan.ndjson"
+            nan_p.write_text('{"batch_id":"b1","x":NaN,"mmr_checkpoint":{}}\n', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                cwr.checkpoint_from_registry_entry(nan_p)
+
+
 
 if __name__ == "__main__":
     unittest.main()
