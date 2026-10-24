@@ -41,15 +41,20 @@ layer waiting for production traffic.
   for the same reason.
 - **Automated submission to independent witnesses**, with receipts retained and verified
   under explicit key policies. Checkpointing itself is live since September 1;
-  the first external receipt is a manual demonstration, not a deployed submission loop.
+  the external receipts so far (September 7, and October 20 from a second operator) were
+  taken by hand, not by a deployed submission loop.
 - **Receipt-bound witness time and grade**, if those properties are required by policy.
   The captured receipt authenticates a root, not the response's grade or an observation time.
 
 ## Later
 
-- Parallel witnesses and split-view monitoring. The September 7 receipt demonstrates
-  one checkpoint at one external operator; see the evidence packet linked from README.
-  A second operator, continuous submission and independent split-view monitoring remain open.
+- Parallel witnesses and split-view monitoring. The September 7 receipt covers checkpoint 1
+  at one external operator. Since October 20 a second operator, HORIZON SHIELD (a party other
+  than the registry operator, with its own key, which also holds a registered mirror), has
+  receipts for checkpoints 1 and 2
+  ([docs/evidence/witness-2026-10-20-nenrin](docs/evidence/witness-2026-10-20-nenrin/README.md)).
+  Nothing there shows a track record or independence beyond a different operator and key.
+  Continuous submission and independent split-view monitoring remain open.
 - A conformance suite for third-party verifier implementations, so "I implemented
   the anchor format" is checkable rather than asserted.
 
