@@ -59,6 +59,8 @@ ots info docs/evidence/witness-2026-10-20-nenrin/jidec-127.txt.ots     # shows t
 ots verify docs/evidence/witness-2026-10-20-nenrin/jidec-127.txt.ots   # needs a Bitcoin node
 ```
 
+Entry 127 describes the witness as "independent". That wording is corrected by a later entry, which cites entry 127 and does not edit it: jidec-143.txt (the ledger's entry 143 as served at https://ledger.horizonshield.dev/ledger/143?format=raw) and its proof jidec-143.txt.ots (Bitcoin block 972850). It uses the wording of this README.
+
 So the first tree head, the witness key and both receipts existed before 2026-10-20 05:09:57 UTC. The anchor bounds the time from above only. `tests/test_witness_receipt_nenrin.py` checks steps 1 and 2 and that the proof commits to that SHA-256, offline; checking the block header itself needs a node or a block explorer.
 
 ## Limits
@@ -83,4 +85,5 @@ The witness signs one receipt per checkpoint and never reissues it. Its log is a
 | `witness-key.json` | the witness public key and its key id |
 | `witness-tree-heads.ndjson` | the witness log's signed tree heads at capture |
 | `jidec-127.txt`, `jidec-127.txt.ots` | the ledger entry that fixes the first tree head, and its OpenTimestamps proof |
+| `jidec-143.txt`, `jidec-143.txt.ots` | the later ledger entry that corrects how entry 127 describes the witness, and its OpenTimestamps proof |
 | `SHA256SUMS` | file integrity; not a signed statement |
