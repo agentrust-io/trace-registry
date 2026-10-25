@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import threading
 import time
@@ -145,6 +146,15 @@ class TRACEAggregator:
         enable_mmr_checkpoints: bool = True,
         now_ts: Callable[[], str] = _now_ts,
     ) -> None:
+        if (
+            isinstance(flush_interval, bool)
+            or not isinstance(flush_interval, (int, float))
+            or not math.isfinite(flush_interval)
+            or flush_interval <= 0
+        ):
+            raise ValueError("flush_interval must be a positive finite number")
+        if type(max_batch_size) is not int or max_batch_size < 0:
+            raise ValueError("max_batch_size must be a non-negative integer")
         self._registry_dir = registry_dir
         self._proofs_dir = proofs_dir
         self._flush_interval = flush_interval
@@ -210,6 +220,15 @@ class TRACEAggregator:
         without the registry ever recomputing its bytes (docs/anchor-format.md
         section 0).
         """
+        if not isinstance(claims, list):
+            raise ValueError("claims must be a list of claim objects")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a positive finite number")
         if not claims:
             return []
         if canonicalization_id not in _ANCHOR_LEAF_CANONICALIZATIONS:
@@ -218,14 +237,26 @@ class TRACEAggregator:
                 f"registered anchor-leaf constructions: "
                 f"{sorted(_ANCHOR_LEAF_CANONICALIZATIONS)}"
             )
+        from trace_verify._verify import anchor_profile_violation, loads_unique
+
         if canonicalization_id == _CANONICALIZATION_AS_TRANSMITTED:
-            if raw_bytes is None or len(raw_bytes) != len(claims):
+            if (
+                not isinstance(raw_bytes, list)
+                or len(raw_bytes) != len(claims)
+                or any(type(rb) is not bytes for rb in raw_bytes)
+            ):
                 raise ValueError(
                     "canonicalization_id='as-transmitted' requires one "
                     "raw_bytes entry per claim -- there is nothing to "
                     "re-serialize at this layer, by design"
                 )
-        from trace_verify._verify import anchor_profile_violation
+            for claim, rb in zip(claims, raw_bytes):
+                try:
+                    parsed_rb = loads_unique(rb.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                    raise ValueError(f"raw_bytes is not valid claim JSON: {exc}") from exc
+                if parsed_rb != claim:
+                    raise ValueError("raw_bytes does not match the parsed claim object")
 
         for claim in claims:
             # registry-anchor-v1 section 1 excludes floats and integers
