@@ -152,7 +152,10 @@ def loads_unique(raw: bytes | str) -> object:
             result[key] = value
         return result
 
-    return json.loads(raw, object_pairs_hook=_unique)
+    def _no_nonfinite(token: str) -> object:
+        raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+    return json.loads(raw, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
 
 
 def anchor_profile_violation(claim: object) -> str | None:
