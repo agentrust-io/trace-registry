@@ -168,10 +168,12 @@ class TestInstalledArtifactChecks(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "installed CLI version failed"):
                 artifact_check.check_cli(["fake-cli"], ROOT, "0.4.3")
 
-    def test_actual_chain_and_receipt_controls(self):
+    def test_actual_chain_controls(self):
         command = [sys.executable, "-m", "trace_verify"]
         artifact_check.check_chain(command, ROOT)
-        artifact_check.check_receipt(command, ROOT, True)
+
+    def test_actual_receipt_controls(self):
+        artifact_check.check_receipt([sys.executable, "-m", "trace_verify"], ROOT, True)
 
     def test_chain_and_receipt_cannot_always_accept_or_reject(self):
         for check in (artifact_check.check_chain,
@@ -185,6 +187,16 @@ class TestInstalledArtifactChecks(unittest.TestCase):
                         with self.assertRaises(RuntimeError):
                             check(["fake-cli"], ROOT)
 
+    def test_chain_rejects_an_unrelated_root_error(self):
+        responses = [
+            subprocess.CompletedProcess([], 0, json.dumps({"verified": True, "checkpoints": 1}), ""),
+            subprocess.CompletedProcess([], 1, json.dumps({"verified": False, "checkpoints": 1,
+                                                         "errors": ["invalid root encoding"]}), ""),
+        ]
+        with patch.object(artifact_check.subprocess, "run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "wrong rejection for altered chain"):
+                artifact_check.check_chain(["fake-cli"], ROOT)
+
     def test_missing_extra_does_not_accept_unrelated_failures(self):
         for code, stderr in ((1, "bad evidence"), (2, "usage: invalid arguments"),
                              (2, "Traceback: missing module")):
@@ -193,7 +205,6 @@ class TestInstalledArtifactChecks(unittest.TestCase):
                 with patch.object(artifact_check.subprocess, "run", return_value=result):
                     with self.assertRaisesRegex(RuntimeError, "missing witness extra"):
                         artifact_check.check_receipt(["fake-cli"], ROOT, False)
-
 
     def test_actual_cli_accepts_control_and_rejects_wrong_anchor(self):
         with patch.object(artifact_check.subprocess, "run", wraps=subprocess.run) as run:

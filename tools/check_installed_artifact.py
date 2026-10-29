@@ -75,7 +75,10 @@ def check_chain(command, source_root):
     require(result.returncode == 1, f"altered chain was not rejected: {result}")
     appraisal = json.loads(result.stdout)
     require(appraisal.get("verified") is False and appraisal.get("checkpoints") == 1
-            and any("root" in error for error in appraisal.get("errors", [])),
+            and len(appraisal.get("errors", [])) == 1
+            and "recomputed root" in appraisal["errors"][0]
+            and "this entry's committed content was altered after it was checkpointed"
+            in appraisal["errors"][0],
             f"wrong rejection for altered chain: {appraisal}")
 
 
