@@ -15,15 +15,18 @@ import base64
 import re
 from pathlib import Path
 
+from trace_verify._verify import loads_unique
+
 # Producer ids look like name/semver (see schema/producer-key.schema.json and
 # schema/registry-entry.schema.json). This is the same pattern both schemas
 # enforce; we re-validate here so a hostile producer id can never escape the
 # producers/ directory when it is turned into a key filename.
 _PRODUCER_ID_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._+\-]*$"
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._+\-]*\Z"
 )
-_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 _FORBIDDEN_JWK_KEYS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
+_PRIVATE_JWK_PARAMS = _FORBIDDEN_JWK_KEYS
 
 
 def is_valid_producer_id(producer_id: object) -> bool:
@@ -36,7 +39,7 @@ def is_valid_producer_id(producer_id: object) -> bool:
         return False
     if ".." in producer_id or "\\" in producer_id:
         return False
-    return bool(_PRODUCER_ID_RE.match(producer_id))
+    return bool(_PRODUCER_ID_RE.fullmatch(producer_id))
 
 
 def _require_cryptography():
@@ -122,6 +125,13 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
     """
     Ed25519PublicKey, InvalidSignature = _require_cryptography()
 
+    if not isinstance(claim, dict):
+        raise ValueError("claim must be a JSON object")
+    if not isinstance(public_key_jwk, dict):
+        raise ValueError("public_key_jwk must be a JSON object")
+    if _PRIVATE_JWK_PARAMS.intersection(public_key_jwk):
+        raise ValueError("public_key_jwk must not contain private or symmetric JWK parameters")
+
     sig_b64 = claim.get("signature")
     if not isinstance(sig_b64, str) or not sig_b64:
         raise ValueError("claim has no 'signature' field")
@@ -142,7 +152,12 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
 
 
 def _decode_base64url(value: str, field: str, expected_length: int) -> bytes:
-    if not isinstance(value, str) or not _BASE64URL_RE.fullmatch(value) or "=" in value:
+    if (
+        not isinstance(value, str)
+        or not _BASE64URL_RE.fullmatch(value)
+        or "=" in value
+        or len(value) % 4 == 1
+    ):
         raise ValueError(f"{field} is not unpadded base64url")
     padding = "=" * (-len(value) % 4)
     try:
