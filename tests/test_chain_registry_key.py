@@ -87,3 +87,55 @@ class RegistryKeyPinTests(unittest.TestCase):
             code, stdout, _ = self.run_chain(path, "--registry-key", self.key, "--json")
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout)["reason"], "no_checkpoints")
+
+    def test_check_url_allowed_rejects_non_global_ips_and_inclusion_validates_int_fields(self):
+        from trace_verify import __main__ as cli_mod
+
+        orig_hosts = cli_mod._ALLOWED_HOSTS
+        try:
+            cli_mod._ALLOWED_HOSTS = frozenset({"127.0.0.1", "169.254.169.254", "::1"})
+            for host in ("127.0.0.1", "169.254.169.254", "[::1]"):
+                with self.subTest(host=host):
+                    reason = cli_mod._check_url_allowed(f"https://{host}/entry.ndjson")
+                    self.assertIsNotNone(reason)
+                    self.assertIn("non-global IP", reason or "")
+        finally:
+            cli_mod._ALLOWED_HOSTS = orig_hosts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            claim_p = Path(tmp) / "claim.json"
+            proof_p = Path(tmp) / "proof.json"
+            entry_p = Path(tmp) / "entry.ndjson"
+            claim_p.write_text('{"producer": "cmcp-gateway/0.1.0"}', encoding="utf-8")
+            entry_p.write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-06-12T00:00:00Z",
+                        "merkle_root": "sha256:" + "a" * 64,
+                        "leaf_count": 1,
+                        "producer": "cmcp-gateway/0.1.0",
+                        "batch_id": "b1",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for idx, bad_proof in enumerate(({"audit_path": []}, {"audit_path": [], "leaf_index": True}, {"audit_path": [], "leaf_index": "0"})):
+                with self.subTest(bad_proof=idx):
+                    proof_p.write_text(json.dumps(bad_proof), encoding="utf-8")
+                    out = io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                        rc = main(
+                            [
+                                "--claim",
+                                str(claim_p),
+                                "--proof",
+                                str(proof_p),
+                                "--entry",
+                                str(entry_p),
+                                "--no-verify-signature",
+                                "--json",
+                            ]
+                        )
+                    self.assertEqual(rc, 1)
+                    self.assertIn("leaf_index", json.loads(out.getvalue())["error"])
