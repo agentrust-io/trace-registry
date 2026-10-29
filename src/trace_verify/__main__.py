@@ -37,6 +37,7 @@ Exit code 2: bad arguments or unreadable files.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import sys
 import tempfile
@@ -69,6 +70,12 @@ def _check_url_allowed(url: str) -> str | None:
     if parsed.scheme != "https":
         return f"scheme {parsed.scheme!r} not allowed (https only)"
     host = (parsed.hostname or "").lower()
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        ip = None
+    if ip is not None and not ip.is_global:
+        return f"non-global IP literal {host!r} not allowed"
     if host not in _ALLOWED_HOSTS:
         return f"host {host!r} not in allowlist {sorted(_ALLOWED_HOSTS)}"
     return None
@@ -318,13 +325,19 @@ def _main_inclusion(argv: list[str] | None) -> int:
         raw_path = proof.get("audit_path")
         if not isinstance(raw_path, list):
             raise ValueError("proof.audit_path must be a list")
+        leaf_index = proof.get("leaf_index")
+        if type(leaf_index) is not int or leaf_index < 0:
+            raise ValueError("proof.leaf_index must be a non-negative integer")
+        leaf_count = entry.get("leaf_count")
+        if type(leaf_count) is not int or leaf_count < 1:
+            raise ValueError("entry.leaf_count must be a positive integer")
         audit_path = [decode_hash(h) for h in raw_path]
         merkle_root = decode_hash(entry.get("merkle_root"))
         ok = verify_inclusion(
             claim,
-            proof.get("leaf_index"),
+            leaf_index,
             audit_path,
-            entry.get("leaf_count"),
+            leaf_count,
             merkle_root,
             canonicalization_id=canonicalization_id,
             raw_bytes=claim_raw,
@@ -458,13 +471,13 @@ def _main_chain(argv: list[str]) -> int:
 
     registry_key = None
     if args.registry_key is not None:
-        try:
-            raw_key = bytes.fromhex(args.registry_key)
-        except ValueError:
+        if (
+            not isinstance(args.registry_key, str)
+            or len(args.registry_key) != 64
+            or any(c not in "0123456789abcdefABCDEF" for c in args.registry_key)
+        ):
             p.error("--registry-key must be a 32-byte Ed25519 public key in hex")
-        if len(raw_key) != 32 or len(args.registry_key) != 64:
-            p.error("--registry-key must be a 32-byte Ed25519 public key in hex")
-        registry_key = raw_key.hex()
+        registry_key = args.registry_key.lower()
 
     from trace_verify._checkpoint import (
         CheckpointRecord,
