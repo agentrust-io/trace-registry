@@ -52,6 +52,7 @@ from trace_verify._checkpoint import (
     verify_chain_against_entries,
     verify_checkpoint_chain,
 )
+from trace_verify._verify import loads_unique
 
 
 def _load_entries(paths: list[Path]) -> list[dict]:
@@ -61,7 +62,7 @@ def _load_entries(paths: list[Path]) -> list[dict]:
             if not line.strip():
                 continue
             try:
-                entry = json.loads(line)
+                entry = loads_unique(line)
             except (ValueError, RecursionError) as exc:
                 raise SystemExit(f"error: {path}:{lineno}: invalid JSON: {exc}")
             if not isinstance(entry, dict):
