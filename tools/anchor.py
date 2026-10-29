@@ -94,6 +94,11 @@ def canonical_claim_bytes(
       Requires ``raw_bytes``; omitting it is a caller error, not a silent
       fallback to some other construction.
     """
+    if not isinstance(canonicalization_id, str):
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -109,13 +114,25 @@ def canonical_claim_bytes(
                 "(the producer's exact signed bytes) -- there is nothing to "
                 "re-serialize at this layer, by design"
             )
+        # Contract: as-transmitted returns raw_bytes verbatim without
+        # re-serialization or sorted-key profile walking.
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
             raise ValueError("claim must be a JSON object")
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        if str(REPO_ROOT / "src") not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT / "src"))
+        from trace_verify._verify import anchor_profile_violation
+
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
@@ -230,15 +247,20 @@ def _load_claim(path: Path) -> tuple[dict, bytes]:
 
 def _registry_is_chained(registry_dir: Path) -> bool:
     """True if any published entry carries an mmr_checkpoint."""
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    from trace_verify._verify import loads_unique
+
     try:
         for path in registry_dir.rglob("*.ndjson"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 try:
-                    if isinstance(json.loads(line).get("mmr_checkpoint"), dict):
+                    entry = loads_unique(line)
+                    if isinstance(entry, dict) and isinstance(entry.get("mmr_checkpoint"), dict):
                         return True
-                except json.JSONDecodeError:
+                except ValueError:
                     continue
     except OSError:
         return False

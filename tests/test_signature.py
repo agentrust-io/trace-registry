@@ -292,3 +292,96 @@ class TestSignaturePreimageIsJCS(unittest.TestCase):
 
         self.assertTrue(verify_claim_signature(signed, jwk))
         self.assertEqual(canonical_body_bytes(signed), rfc8785.dumps(claim))
+
+
+@unittest.skipUnless(HAS_CRYPTOGRAPHY, SKIP_MSG)
+class TestJwkHardeningAndValidateProducers(unittest.TestCase):
+    """RFC 7517 / RFC 7518 / RFC 8037 private or symmetric JWK members and
+    non-canonical base64url 'x' must be rejected (#146)."""
+
+    def setUp(self):
+        self.priv, self.jwk = _make_keypair()
+        self.claim = _sign_claim(self.priv, MINIMAL_CLAIM)
+
+    @staticmethod
+    def _noncanonical_b64url_32(x: str) -> str:
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        idx = alphabet.index(x[-1])
+        # Flip the low bit (one of the 2 unused padding bits in a 43-char 32-byte encoding)
+        return x[:-1] + alphabet[idx ^ 1]
+
+    def test_rejects_private_and_symmetric_jwk_parameters(self):
+        from trace_verify._signature import (
+            validate_public_key_jwk,
+            verify_claim_against_registry,
+            verify_claim_signature,
+        )
+
+        for param in ("d", "p", "q", "dp", "dq", "qi", "oth", "k"):
+            bad_jwk = {**self.jwk, param: "secret"}
+            with self.subTest(param=param):
+                with self.assertRaisesRegex(ValueError, "private or symmetric"):
+                    validate_public_key_jwk(bad_jwk)
+                with self.assertRaisesRegex(ValueError, "private or symmetric"):
+                    verify_claim_signature(self.claim, bad_jwk)
+                entry = {
+                    "producer_id": "test-producer/1.0.0",
+                    "key_type": "Ed25519",
+                    "public_key_jwk": bad_jwk,
+                    "active_since": "2026-06-22T00:00:00Z",
+                    "contact": "test@example.com",
+                }
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    key_file = Path(tmpdir) / "test-producer-1.0.0.json"
+                    key_file.write_text(json.dumps(entry), encoding="utf-8")
+                    ok, reason = verify_claim_against_registry(
+                        self.claim, "test-producer/1.0.0", Path(tmpdir)
+                    )
+                    self.assertFalse(ok)
+                    self.assertIn("private or symmetric", reason)
+
+    def test_rejects_noncanonical_base64url_x(self):
+        from trace_verify._signature import validate_public_key_jwk, verify_claim_signature
+
+        noncanon_x = self._noncanonical_b64url_32(self.jwk["x"])
+        self.assertEqual(len(noncanon_x), 43)
+        self.assertNotEqual(noncanon_x, self.jwk["x"])
+        bad_jwk = {**self.jwk, "x": noncanon_x}
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            validate_public_key_jwk(bad_jwk)
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            verify_claim_signature(self.claim, bad_jwk)
+
+    def test_validate_producers_rejects_private_jwk_noncanonical_x_and_duplicate_keys(self):
+        import io
+        import sys
+        from contextlib import redirect_stdout
+
+        repo_root = Path(__file__).resolve().parents[1]
+        if str(repo_root / "tools") not in sys.path:
+            sys.path.insert(0, str(repo_root / "tools"))
+        import validate_producers
+
+        # Committed producers directory must still pass
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(validate_producers.main([str(repo_root / "producers")]), 0)
+
+        noncanon_x = self._noncanonical_b64url_32(self.jwk["x"])
+        base_entry = {
+            "producer_id": "test-producer/1.0.0",
+            "key_type": "Ed25519",
+            "public_key_jwk": self.jwk,
+            "active_since": "2026-06-22T00:00:00Z",
+            "contact": "test@example.com",
+        }
+        bad_payloads = [
+            json.dumps({**base_entry, "public_key_jwk": {**self.jwk, "d": self.jwk["x"]}}),
+            json.dumps({**base_entry, "public_key_jwk": {**self.jwk, "x": noncanon_x}}),
+            '{"producer_id": "evil/1.0.0", ' + json.dumps(base_entry)[1:],
+        ]
+        for payload in bad_payloads:
+            with self.subTest(payload=payload[:60]), tempfile.TemporaryDirectory() as tmpdir:
+                p = Path(tmpdir) / "test-producer-1.0.0.json"
+                p.write_text(payload, encoding="utf-8")
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(validate_producers.main([tmpdir]), 1)
