@@ -94,6 +94,11 @@ jobs:
               cd "$check_dir"
               "$check_dir/venv/bin/python" -I "$source_root/tools/check_installed_artifact.py" \
                 "$source_root" "$version"
+              "$check_dir/venv/bin/python" -m pip install --require-hashes \
+                -r "$source_root/requirements/witness.txt"
+              "$check_dir/venv/bin/python" -m pip check
+              "$check_dir/venv/bin/python" -I "$source_root/tools/check_installed_artifact.py" \
+                "$source_root" "$version" --witness
             )
           done
 
