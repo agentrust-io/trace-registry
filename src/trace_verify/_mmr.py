@@ -328,12 +328,9 @@ def _locate_path(root_pos: int, height: int, target_pos: int) -> list[_PathStep]
 
 
 def _parse_digest_hex(h: object) -> bytes:
-    if not isinstance(h, str):
-        raise InvalidArgumentError("proof element is not a hex string")
-    b = bytes.fromhex(h)
-    if len(b) != DIGEST_LEN:
-        raise InvalidArgumentError(f"proof element has wrong digest length: {len(b)}")
-    return b
+    if not isinstance(h, str) or len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
+        raise InvalidArgumentError("proof element is not a 64-character lowercase hex string")
+    return bytes.fromhex(h)
 
 
 # -- inclusion -------------------------------------------------------------
@@ -510,14 +507,19 @@ class ConsistencyProof:
     def from_dict(cls, d: dict) -> "ConsistencyProof":
         """Raises InvalidArgumentError on a missing or mistyped member."""
         try:
+            old_peaks = tuple(d["old_peaks"])
+            witness = tuple(tuple(w) for w in d["witness"])
+            new_peaks = tuple(d["new_peaks"])
+            for h in (*old_peaks, *new_peaks, *(item for w in witness for item in w)):
+                _parse_digest_hex(h)
             return cls(
                 v=int(d["v"]),
                 kind=d["kind"],
                 size_a=int(d["size_a"]),
                 size_b=int(d["size_b"]),
-                old_peaks=tuple(d["old_peaks"]),
-                witness=tuple(tuple(w) for w in d["witness"]),
-                new_peaks=tuple(d["new_peaks"]),
+                old_peaks=old_peaks,
+                witness=witness,
+                new_peaks=new_peaks,
             )
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise InvalidArgumentError(f"malformed consistency proof: {exc!r}") from exc

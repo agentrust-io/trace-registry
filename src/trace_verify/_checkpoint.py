@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 
 from trace_verify import _mmr
@@ -77,6 +78,9 @@ _INT_FIELDS = ("v", "mmr_size", "prev_size")
 _STR_FIELDS = ("kind", "log_id", "root", "prev_root", "key_id", "timestamp", "signature")
 _REQUIRED_FIELDS = ("v", "kind", "log_id", "mmr_size", "root", "prev_size",
                     "key_id", "timestamp", "signature")
+_ALLOWED_FIELDS = frozenset(_REQUIRED_FIELDS) | {"prev_root", "consistency_proof"}
+_HEX_32_RE = re.compile(r"^[0-9a-f]{64}$")
+_HEX_64_RE = re.compile(r"^[0-9a-f]{128}$")
 
 
 def _field_type_problem(fields: dict) -> str | None:
@@ -95,6 +99,86 @@ def _field_type_problem(fields: dict) -> str | None:
         if not isinstance(value, str):
             return f"checkpoint {key} must be a string, got {type(value).__name__}"
     return None
+
+
+_UNSET = object()
+
+
+def _validate_consistency_proof(consistency_proof: object) -> None:
+    """Validate that consistency_proof is a well-formed ConsistencyProof with 64-char lowercase hex digests."""
+    if isinstance(consistency_proof, dict):
+        try:
+            consistency_proof = _mmr.ConsistencyProof.from_dict(consistency_proof)
+        except _mmr.InvalidArgumentError as exc:
+            raise ValueError(str(exc)) from exc
+    if not isinstance(consistency_proof, _mmr.ConsistencyProof):
+        raise ValueError("consistency_proof is not a ConsistencyProof or JSON object")
+    if type(consistency_proof.v) is not int or consistency_proof.v != 1:
+        raise ValueError("consistency_proof v must be 1")
+    if consistency_proof.kind != "consistency":
+        raise ValueError("consistency_proof kind must be 'consistency'")
+    if type(consistency_proof.size_a) is not int or type(consistency_proof.size_b) is not int:
+        raise ValueError("consistency_proof sizes must be integers")
+    if (
+        not isinstance(consistency_proof.old_peaks, (tuple, list))
+        or not isinstance(consistency_proof.new_peaks, (tuple, list))
+        or not isinstance(consistency_proof.witness, (tuple, list))
+        or any(not isinstance(w, (tuple, list)) for w in consistency_proof.witness)
+    ):
+        raise ValueError("consistency_proof peak and witness fields must be sequences")
+    for h in (
+        *consistency_proof.old_peaks,
+        *consistency_proof.new_peaks,
+        *(item for w in consistency_proof.witness for item in w),
+    ):
+        if not isinstance(h, str) or not _HEX_32_RE.fullmatch(h):
+            raise ValueError("consistency_proof digest must be 64 lowercase hex characters")
+
+
+def _validate_checkpoint_fields(
+    cp_or_fields: "CheckpointRecord | dict",
+    consistency_proof: object = _UNSET,
+) -> None:
+    """Enforce semantic and hex invariants shared across from_dict, offline, and chain verification."""
+    if isinstance(cp_or_fields, CheckpointRecord):
+        fields = {k: getattr(cp_or_fields, k, None) for k in _INT_FIELDS + _STR_FIELDS}
+        if consistency_proof is _UNSET:
+            consistency_proof = getattr(cp_or_fields, "consistency_proof", None)
+    elif isinstance(cp_or_fields, dict):
+        fields = cp_or_fields
+        if consistency_proof is _UNSET:
+            consistency_proof = fields.get("consistency_proof")
+    else:
+        raise ValueError("checkpoint is not a CheckpointRecord or dict")
+
+    problem = _field_type_problem(fields)
+    if problem is not None:
+        raise ValueError(problem)
+    if fields["v"] != 1:
+        raise ValueError(f"checkpoint v must be 1, got {fields['v']!r}")
+    if fields["kind"] != CHECKPOINT_KIND:
+        raise ValueError(f"checkpoint kind must be {CHECKPOINT_KIND!r}, got {fields['kind']!r}")
+    if fields["mmr_size"] < 1:
+        raise ValueError("checkpoint mmr_size must be at least 1")
+    if not 0 <= fields["prev_size"] < fields["mmr_size"]:
+        raise ValueError("checkpoint prev_size must satisfy 0 <= prev_size < mmr_size")
+    if not _HEX_32_RE.fullmatch(fields["root"]):
+        raise ValueError("checkpoint root must be 64 lowercase hex characters")
+    if not _HEX_32_RE.fullmatch(fields["key_id"]):
+        raise ValueError("checkpoint key_id must be 64 lowercase hex characters")
+    if not _HEX_64_RE.fullmatch(fields["signature"]):
+        raise ValueError("checkpoint signature must be 128 lowercase hex characters")
+    if fields["prev_size"] == 0:
+        if fields["prev_root"] != "":
+            raise ValueError("first checkpoint prev_root must be empty")
+        if consistency_proof is not None:
+            raise ValueError("first checkpoint must not carry consistency_proof")
+    else:
+        if not _HEX_32_RE.fullmatch(fields["prev_root"]):
+            raise ValueError("checkpoint prev_root must be 64 lowercase hex characters")
+        if consistency_proof is None:
+            raise ValueError("non-initial checkpoint must carry consistency_proof")
+        _validate_consistency_proof(consistency_proof)
 
 
 @dataclass
@@ -160,27 +244,34 @@ class CheckpointRecord:
         """Parse a checkpoint as published in a registry entry.
 
         Raises ValueError for anything that is not a well-formed checkpoint:
-        a missing member, an integer member that is not a JSON integer, or a
-        string member that is not a string. It used to raise KeyError or
-        TypeError, and let a non-string root through to fail later in
-        verify_checkpoint_link, which documents that it never raises.
+        unknown or non-string keys, a missing required member, a mistyped
+        integer or string member, non-canonical hex digests/signatures, or
+        violated ``prev_size`` invariants (``prev_size == 0`` requires
+        ``consistency_proof is None`` and empty/omitted ``prev_root``;
+        ``prev_size > 0`` requires a valid ``consistency_proof`` and 64-char
+        lowercase hex ``prev_root``).
         """
         if not isinstance(d, dict):
             raise ValueError("checkpoint is not a JSON object")
+        if any(not isinstance(k, str) for k in d):
+            raise ValueError("checkpoint keys must be strings")
+        unknown = sorted(set(d) - _ALLOWED_FIELDS)
+        if unknown:
+            raise ValueError(f"checkpoint contains unknown fields: {', '.join(unknown)}")
         missing = [k for k in _REQUIRED_FIELDS if k not in d]
         if missing:
             raise ValueError(f"checkpoint is missing {', '.join(missing)}")
         fields = {k: d[k] for k in _REQUIRED_FIELDS}
         fields["prev_root"] = d.get("prev_root", "")
-        problem = _field_type_problem(fields)
-        if problem is not None:
-            raise ValueError(problem)
-        cp = d.get("consistency_proof")
-        if cp is not None:
-            if not isinstance(cp, dict):
+        raw_cp = d.get("consistency_proof")
+        cp: _mmr.ConsistencyProof | None = None
+        if raw_cp is not None:
+            if not isinstance(raw_cp, dict):
                 raise ValueError("consistency_proof is not a JSON object")
-            cp = _mmr.ConsistencyProof.from_dict(cp)
-        return cls(**fields, consistency_proof=cp)
+            cp = _mmr.ConsistencyProof.from_dict(raw_cp)
+        record = cls(**fields, consistency_proof=cp)
+        _validate_checkpoint_fields(record)
+        return record
 
 
 def verify_checkpoint_signature_offline(cp: CheckpointRecord) -> bool:
@@ -194,6 +285,7 @@ def verify_checkpoint_signature_offline(cp: CheckpointRecord) -> bool:
     try:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+        _validate_checkpoint_fields(cp)
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(cp.key_id))
         public_key.verify(bytes.fromhex(cp.signature), cp.digest().encode("ascii"))
         return True
@@ -267,11 +359,10 @@ def verify_checkpoint_link(prev: CheckpointRecord, curr: CheckpointRecord) -> tu
             "prev_size is NOT sufficient evidence of an honest extension; "
             "a real MMR consistency proof is required"
         )
-    try:
-        root_a = bytes.fromhex(prev.root)
-        root_b = bytes.fromhex(curr.root)
-    except ValueError as exc:
-        return False, f"malformed root hex: {exc}"
+    if not _HEX_32_RE.fullmatch(prev.root) or not _HEX_32_RE.fullmatch(curr.root):
+        return False, "malformed root hex: must be 64 lowercase hex characters"
+    root_a = bytes.fromhex(prev.root)
+    root_b = bytes.fromhex(curr.root)
     ok = _mmr.verify_consistency(root_a, prev.mmr_size, root_b, curr.mmr_size, curr.consistency_proof)
     if not ok:
         return False, (
@@ -283,6 +374,11 @@ def verify_checkpoint_link(prev: CheckpointRecord, curr: CheckpointRecord) -> tu
         )
     if not verify_checkpoint_signature_offline(curr):
         return False, f"checkpoint signature does not verify at mmr_size={curr.mmr_size}"
+    try:
+        _validate_checkpoint_fields(prev)
+        _validate_checkpoint_fields(curr)
+    except ValueError as exc:
+        return False, f"malformed checkpoint: {exc}"
     return True, ""
 
 
