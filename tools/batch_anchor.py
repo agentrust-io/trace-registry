@@ -280,6 +280,10 @@ def batch_id_for(claims: list[dict]) -> str:
 
 def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
     """Return True if any NDJSON file in the registry already contains batch_id."""
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    from trace_verify._verify import loads_unique
+
     for ndjson in registry_dir.rglob("*.ndjson"):
         try:
             for line in ndjson.read_text(encoding="utf-8").splitlines():
@@ -287,10 +291,10 @@ def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
-                    if entry.get("batch_id") == batch_id:
+                    entry = loads_unique(line)
+                    if isinstance(entry, dict) and entry.get("batch_id") == batch_id:
                         return True
-                except json.JSONDecodeError:
+                except (ValueError, RecursionError):
                     continue
         except OSError:
             continue
@@ -333,15 +337,22 @@ def load_published_entries(registry_dir: Path) -> list[dict]:
     Day files are named registry/YYYY/MM/DD.ndjson, so sorting paths sorts
     chronologically, and lines within a file are already in append order.
     """
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    from trace_verify._verify import loads_unique
+
     entries: list[dict] = []
     for path in sorted(registry_dir.rglob("*.ndjson")):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError as exc:
+                entry = loads_unique(line)
+            except (ValueError, RecursionError) as exc:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
+            if not isinstance(entry, dict):
+                raise ValueError(f"{path}:{lineno}: entry is not a JSON object")
+            entries.append(entry)
     return entries
 
 

@@ -230,15 +230,20 @@ def _load_claim(path: Path) -> tuple[dict, bytes]:
 
 def _registry_is_chained(registry_dir: Path) -> bool:
     """True if any published entry carries an mmr_checkpoint."""
+    if str(REPO_ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT / "src"))
+    from trace_verify._verify import loads_unique
+
     try:
         for path in registry_dir.rglob("*.ndjson"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 try:
-                    if isinstance(json.loads(line).get("mmr_checkpoint"), dict):
+                    entry = loads_unique(line)
+                    if isinstance(entry, dict) and isinstance(entry.get("mmr_checkpoint"), dict):
                         return True
-                except json.JSONDecodeError:
+                except (ValueError, RecursionError):
                     continue
     except OSError:
         return False
