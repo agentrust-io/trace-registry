@@ -177,7 +177,7 @@ def peaks(size: int) -> list[int]:
     strictly decrease left to right. Any size that does not decompose this
     way (e.g. an in-progress/incomplete parent) is not a valid MMR size.
     """
-    if not isinstance(size, int) or isinstance(size, bool) or size < 0 or size >= MAX_MMR_SIZE:
+    if type(size) is not int or size < 0 or size >= MAX_MMR_SIZE:
         raise InvalidArgumentError(f"invalid MMR size: {size}")
     result: list[int] = []
     remaining = size
@@ -336,12 +336,13 @@ def _locate_path(root_pos: int, height: int, target_pos: int) -> list[_PathStep]
 
 
 def _parse_digest_hex(h: object) -> bytes:
-    if not isinstance(h, str):
-        raise InvalidArgumentError("proof element is not a hex string")
-    b = bytes.fromhex(h)
-    if len(b) != DIGEST_LEN:
-        raise InvalidArgumentError(f"proof element has wrong digest length: {len(b)}")
-    return b
+    if not isinstance(h, str) or len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
+        raise InvalidArgumentError("proof element is not a 64-character lowercase hex string")
+    return bytes.fromhex(h)
+
+
+_INCLUSION_FIELDS = frozenset({"v", "kind", "size", "leaf_index", "witness", "peaks_left", "peaks_right"})
+_CONSISTENCY_FIELDS = frozenset({"v", "kind", "size_a", "size_b", "old_peaks", "witness", "new_peaks"})
 
 
 # -- inclusion -------------------------------------------------------------
@@ -377,12 +378,16 @@ class InclusionProof:
         if not isinstance(d, dict):
             raise InvalidArgumentError("malformed inclusion proof: not a JSON object")
         try:
+            if set(d) != _INCLUSION_FIELDS:
+                raise ValueError("inclusion proof fields mismatch")
             v = _require_exact_int(d["v"], "v")
             kind = d["kind"]
-            if not isinstance(kind, str):
-                raise InvalidArgumentError("kind must be a string")
+            if not isinstance(kind, str) or kind != "inclusion" or v != 1:
+                raise ValueError("invalid inclusion proof header fields")
             size = _require_exact_int(d["size"], "size")
             leaf_index = _require_exact_int(d["leaf_index"], "leaf_index")
+            if size < 1 or leaf_index < 0:
+                raise ValueError("invalid inclusion proof header fields")
             raw_witness = d["witness"]
             raw_peaks_left = d["peaks_left"]
             raw_peaks_right = d["peaks_right"]
@@ -392,14 +397,19 @@ class InclusionProof:
                 or not isinstance(raw_peaks_right, (list, tuple))
             ):
                 raise InvalidArgumentError("witness and peaks must be lists or tuples")
+            witness = tuple(raw_witness)
+            peaks_left = tuple(raw_peaks_left)
+            peaks_right = tuple(raw_peaks_right)
+            for item in (*witness, *peaks_left, *peaks_right):
+                _parse_digest_hex(item)
             return cls(
                 v=v,
                 kind=kind,
                 size=size,
                 leaf_index=leaf_index,
-                witness=tuple(raw_witness),
-                peaks_left=tuple(raw_peaks_left),
-                peaks_right=tuple(raw_peaks_right),
+                witness=witness,
+                peaks_left=peaks_left,
+                peaks_right=peaks_right,
             )
         except InvalidArgumentError:
             raise
@@ -408,10 +418,10 @@ class InclusionProof:
 
 
 def inclusion_proof(reader: NodeReader, leaf_index: int, size: int) -> InclusionProof:
-    if type(size) is not int:
-        raise InvalidArgumentError(f"invalid size: {size}")
+    if type(size) is not int or type(leaf_index) is not int:
+        raise InvalidArgumentError("size and leaf_index must be exact integers")
     lc = leaf_count(size)
-    if type(leaf_index) is not int or leaf_index < 0 or leaf_index >= lc:
+    if leaf_index < 0 or leaf_index >= lc:
         raise InvalidArgumentError(f"leaf_index out of range: {leaf_index}")
     reader_size = reader.size()
     if reader_size < size:
@@ -440,25 +450,15 @@ def verify_inclusion(
     try:
         _assert_digest(root, "root")
         _assert_digest(body_digest, "body_digest")
-        if (
-            proof is None
-            or type(proof.v) is not int
-            or proof.v != 1
-            or proof.kind != "inclusion"
-        ):
+        if proof is None or type(proof.v) is not int or proof.v != 1 or proof.kind != "inclusion":
             return False
-        if (
-            type(size) is not int
-            or type(leaf_index) is not int
-            or type(proof.size) is not int
-            or type(proof.leaf_index) is not int
-        ):
+        if type(size) is not int or size < 0 or size >= MAX_MMR_SIZE:
+            return False
+        if type(leaf_index) is not int or leaf_index < 0:
+            return False
+        if type(proof.size) is not int or type(proof.leaf_index) is not int:
             return False
         if proof.size != size or proof.leaf_index != leaf_index:
-            return False
-        if size < 0 or size >= MAX_MMR_SIZE:
-            return False
-        if leaf_index < 0:
             return False
         if (
             not isinstance(proof.witness, (list, tuple))
@@ -553,12 +553,16 @@ class ConsistencyProof:
         if not isinstance(d, dict):
             raise InvalidArgumentError("malformed consistency proof: not a JSON object")
         try:
+            if set(d) != _CONSISTENCY_FIELDS:
+                raise ValueError("consistency proof fields mismatch")
             v = _require_exact_int(d["v"], "v")
             kind = d["kind"]
-            if not isinstance(kind, str):
-                raise InvalidArgumentError("kind must be a string")
+            if not isinstance(kind, str) or kind != "consistency" or v != 1:
+                raise ValueError("invalid consistency proof header fields")
             size_a = _require_exact_int(d["size_a"], "size_a")
             size_b = _require_exact_int(d["size_b"], "size_b")
+            if size_a < 0 or size_b < size_a:
+                raise ValueError("invalid consistency proof header fields")
             raw_old_peaks = d["old_peaks"]
             raw_witness = d["witness"]
             raw_new_peaks = d["new_peaks"]
@@ -569,18 +573,22 @@ class ConsistencyProof:
             ):
                 raise InvalidArgumentError("peaks and witness must be lists or tuples")
             witness: list[tuple[str, ...]] = []
-            for w in raw_witness:
-                if not isinstance(w, (list, tuple)):
+            for item in raw_witness:
+                if not isinstance(item, (list, tuple)):
                     raise InvalidArgumentError("witness element must be a list or tuple")
-                witness.append(tuple(w))
+                witness.append(tuple(item))
+            old_peaks = tuple(raw_old_peaks)
+            new_peaks = tuple(raw_new_peaks)
+            for digest in (*old_peaks, *new_peaks, *(piece for group in witness for piece in group)):
+                _parse_digest_hex(digest)
             return cls(
                 v=v,
                 kind=kind,
                 size_a=size_a,
                 size_b=size_b,
-                old_peaks=tuple(raw_old_peaks),
+                old_peaks=old_peaks,
                 witness=tuple(witness),
-                new_peaks=tuple(raw_new_peaks),
+                new_peaks=new_peaks,
             )
         except InvalidArgumentError:
             raise
@@ -637,25 +645,15 @@ def verify_consistency(
     try:
         _assert_digest(root_a, "root_a")
         _assert_digest(root_b, "root_b")
-        if (
-            proof is None
-            or type(proof.v) is not int
-            or proof.v != 1
-            or proof.kind != "consistency"
-        ):
+        if proof is None or type(proof.v) is not int or proof.v != 1 or proof.kind != "consistency":
             return False
-        if (
-            type(size_a) is not int
-            or type(size_b) is not int
-            or type(proof.size_a) is not int
-            or type(proof.size_b) is not int
-        ):
+        if type(size_a) is not int or size_a < 0:
+            return False
+        if type(size_b) is not int or size_b < size_a:
+            return False
+        if type(proof.size_a) is not int or type(proof.size_b) is not int:
             return False
         if proof.size_a != size_a or proof.size_b != size_b:
-            return False
-        if size_a < 0:
-            return False
-        if size_b < size_a:
             return False
         if (
             not isinstance(proof.old_peaks, (list, tuple))
