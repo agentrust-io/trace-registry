@@ -90,7 +90,42 @@ def check_url_allowed(url, allowed_hosts):
     return None
 
 
-def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
+def _loads_strict(raw):
+    def _unique(pairs):
+        out = {}
+        for k, v in pairs:
+            if k in out:
+                raise ValueError('duplicate JSON key: ' + k)
+            out[k] = v
+        return out
+
+    def _no_nonfinite(token):
+        raise ValueError('non-finite JSON constant: ' + token)
+
+    text = raw.decode('utf-8') if isinstance(raw, (bytes, bytearray)) else raw
+    return json.loads(text, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
+
+
+def _make_redirect_handler(allowed_hosts):
+    class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            reason = check_url_allowed(newurl, allowed_hosts)
+            if reason is not None:
+                raise urllib.error.HTTPError(
+                    req.full_url, code,
+                    'refusing redirect to ' + newurl + ': ' + reason,
+                    headers, fp,
+                )
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return _AllowlistRedirectHandler()
+
+
+def _build_opener(allowed_hosts):
+    return urllib.request.build_opener(_make_redirect_handler(allowed_hosts))
+
+
+def request(url, allowed_hosts, *, timeout, body=None, content_type=None, opener=None):
     """Perform one request and return an observation of what came back.
 
     Never raises for an HTTP error status or a transport failure. The caller
@@ -106,8 +141,12 @@ def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
     req = urllib.request.Request(url, data=body, headers=headers,
                                  method='POST' if body is not None else 'GET')
     observation = {'method': req.get_method(), 'url': url}
+    if opener is not None:
+        open_fn = opener.open if hasattr(opener, 'open') else opener
+    else:
+        open_fn = _build_opener(allowed_hosts).open
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with open_fn(req, timeout=timeout) as response:
             observation['status'] = response.status
             observation['body'] = response.read()
     except urllib.error.HTTPError as exc:
@@ -126,7 +165,7 @@ def receipt_of(body):
     if not body:
         return None
     try:
-        parsed = json.loads(body)
+        parsed = _loads_strict(body)
     except ValueError:
         return None
     return parsed.get('receipt_b64') if isinstance(parsed, dict) else None
@@ -164,8 +203,8 @@ def checkpoint_from_registry_entry(path, batch_id=None):
         if not line.strip():
             continue
         try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as exc:
+            entry = _loads_strict(line)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise SystemExit('error: ' + str(path) + ':' + str(lineno) + ': invalid JSON: ' + str(exc))
         if not isinstance(entry, dict):
             raise SystemExit('error: ' + str(path) + ':' + str(lineno) + ': entry is not a JSON object')
@@ -193,12 +232,12 @@ def checkpoint_from_registry_entry(path, batch_id=None):
 
 def capture(*, out, witness_base, expected_log_id, registry_key, witness_key,
             checkpoint_path=None, checkpoint_bytes=None, did_url=None,
-            source_commit=None, source_path=None, timeout=30):
+            source_commit=None, source_path=None, timeout=30, opener=None):
     if (checkpoint_path is None) == (checkpoint_bytes is None):
         raise SystemExit('error: pass exactly one of checkpoint_path or checkpoint_bytes')
     if checkpoint_bytes is None:
         checkpoint_bytes = checkpoint_path.read_bytes()
-    checkpoint = json.loads(checkpoint_bytes)
+    checkpoint = _loads_strict(checkpoint_bytes)
     digest = vwr.signing_body_digest(vwr.signing_body(checkpoint)).hex()
 
     base = witness_base.rstrip('/')
@@ -221,7 +260,8 @@ def capture(*, out, witness_base, expected_log_id, registry_key, witness_key,
     failures = []
     for filename, url, body in planned:
         observation = request(url, allowed_hosts, timeout=timeout, body=body,
-                              content_type=CHECKPOINT_CONTENT_TYPE if body is not None else None)
+                              content_type=CHECKPOINT_CONTENT_TYPE if body is not None else None,
+                              opener=opener)
         event = {'method': observation['method'], 'url': url, 'status': observation['status'],
                  'response_file': filename, 'captured_at': observation['captured_at']}
         if observation['body'] is None:
