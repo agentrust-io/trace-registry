@@ -217,6 +217,45 @@ class TestLoadProducerKey(unittest.TestCase):
         from trace_verify._signature import is_valid_producer_id
         self.assertTrue(is_valid_producer_id("cmcp-gateway/0.1.0"))
         self.assertTrue(is_valid_producer_id("acme.thing_2/10.20.30-rc1"))
+        self.assertFalse(is_valid_producer_id("cmcp-gateway/0.1.0\n"))
+
+    def test_rejects_noncanonical_pad_bits_and_private_jwk_parameters(self):
+        from trace_verify._signature import verify_claim_signature
+
+        priv, jwk = _make_keypair()
+        claim = _sign_claim(priv, MINIMAL_CLAIM)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        sig = claim["signature"]
+        sig_alias = sig[:-1] + alphabet[alphabet.index(sig[-1]) ^ 1]
+        with self.assertRaisesRegex(ValueError, "canonical unpadded base64url"):
+            verify_claim_signature({**claim, "signature": sig_alias}, jwk)
+
+        x = jwk["x"]
+        x_alias = x[:-1] + alphabet[alphabet.index(x[-1]) ^ 1]
+        with self.assertRaisesRegex(ValueError, "canonical unpadded base64url"):
+            verify_claim_signature(claim, {**jwk, "x": x_alias})
+
+        for priv_param in ("d", "p", "q", "dp", "dq", "qi", "oth", "k"):
+            with self.subTest(priv_param=priv_param):
+                with self.assertRaisesRegex(ValueError, "private or symmetric"):
+                    verify_claim_signature(claim, {**jwk, priv_param: "secret"})
+
+    def test_load_producer_key_rejects_duplicate_keys_nonfinite_and_non_dict(self):
+        from trace_verify._signature import load_producer_key
+
+        for idx, bad_json in enumerate(
+            (
+                '{"producer_id": "a/1.0.0", "producer_id": "b/1.0.0"}',
+                '{"producer_id": "a/1.0.0", "x": NaN}',
+                '{"producer_id": "a/1.0.0", "x": Infinity}',
+                '["not-a-dict"]',
+            )
+        ):
+            with self.subTest(idx=idx), tempfile.TemporaryDirectory() as tmpdir:
+                p = Path(tmpdir) / "bad-1.0.0.json"
+                p.write_text(bad_json, encoding="utf-8")
+                self.assertIsNone(load_producer_key("bad/1.0.0", Path(tmpdir)))
+
 
     def test_registry_verification_rejects_mismatched_key_identity(self):
         from trace_verify._signature import verify_claim_against_registry
