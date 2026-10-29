@@ -87,6 +87,11 @@ class MismatchedCanonicalizationLayerError(ValueError):
 def _canonical_claim_bytes(
     raw_bytes: bytes, claim: dict, canonicalization_id: str = DEFAULT_CANONICALIZATION
 ) -> bytes:
+    if not isinstance(canonicalization_id, str):
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -96,11 +101,23 @@ def _canonical_claim_bytes(
             "docs/anchor-format.md section 0."
         )
     if canonicalization_id == CANONICALIZATION_AS_TRANSMITTED:
+        # Contract: as-transmitted returns raw_bytes verbatim without
+        # re-serialization or sorted-key profile walking.
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        if not isinstance(claim, dict):
+            raise ValueError("claim must be a JSON object")
+        from trace_verify._verify import anchor_profile_violation
+
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
@@ -280,6 +297,8 @@ def batch_id_for(claims: list[dict]) -> str:
 
 def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
     """Return True if any NDJSON file in the registry already contains batch_id."""
+    from trace_verify._verify import loads_unique
+
     for ndjson in registry_dir.rglob("*.ndjson"):
         try:
             for line in ndjson.read_text(encoding="utf-8").splitlines():
@@ -287,10 +306,10 @@ def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
-                    if entry.get("batch_id") == batch_id:
+                    entry = loads_unique(line)
+                    if isinstance(entry, dict) and entry.get("batch_id") == batch_id:
                         return True
-                except json.JSONDecodeError:
+                except ValueError:
                     continue
         except OSError:
             continue
@@ -333,14 +352,16 @@ def load_published_entries(registry_dir: Path) -> list[dict]:
     Day files are named registry/YYYY/MM/DD.ndjson, so sorting paths sorts
     chronologically, and lines within a file are already in append order.
     """
+    from trace_verify._verify import loads_unique
+
     entries: list[dict] = []
     for path in sorted(registry_dir.rglob("*.ndjson")):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError as exc:
+                entries.append(loads_unique(line))
+            except ValueError as exc:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
     return entries
 
