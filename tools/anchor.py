@@ -260,7 +260,7 @@ def _registry_is_chained(registry_dir: Path) -> bool:
                     entry = loads_unique(line)
                     if isinstance(entry, dict) and isinstance(entry.get("mmr_checkpoint"), dict):
                         return True
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
     except OSError:
         return False

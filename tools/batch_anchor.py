@@ -309,7 +309,7 @@ def is_already_anchored(batch_id: str, registry_dir: Path) -> bool:
                     entry = loads_unique(line)
                     if isinstance(entry, dict) and entry.get("batch_id") == batch_id:
                         return True
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
         except OSError:
             continue
@@ -360,9 +360,12 @@ def load_published_entries(registry_dir: Path) -> list[dict]:
             if not line.strip():
                 continue
             try:
-                entries.append(loads_unique(line))
-            except ValueError as exc:
+                entry = loads_unique(line)
+            except (ValueError, RecursionError) as exc:
                 raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
+            if not isinstance(entry, dict):
+                raise ValueError(f"{path}:{lineno}: entry is not a JSON object")
+            entries.append(entry)
     return entries
 
 

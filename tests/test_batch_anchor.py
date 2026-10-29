@@ -161,6 +161,61 @@ class TestIsAlreadyAnchored(unittest.TestCase):
             result = batch_anchor.is_already_anchored("other", Path(d))
         self.assertFalse(result)
 
+    def test_ndjson_loaders_reject_duplicate_keys_nonfinite_and_non_dict_lines(self):
+        import anchor
+        import verify_checkpoint_chain as vcc
+
+        bad_lines = (
+            ("non_dict", "[1, 2]\n"),
+            (
+                "duplicate_key",
+                '{"batch_id": "forged", "batch_id": "abc123", "mmr_checkpoint": {"v": 1}}\n',
+            ),
+            (
+                "literal_nan",
+                '{"batch_id": "abc123", "x": NaN, "mmr_checkpoint": {"v": 1}}\n',
+            ),
+            (
+                "literal_pos_inf",
+                '{"batch_id": "abc123", "x": Infinity, "mmr_checkpoint": {"v": 1}}\n',
+            ),
+            (
+                "literal_neg_inf",
+                '{"batch_id": "abc123", "x": -Infinity, "mmr_checkpoint": {"v": 1}}\n',
+            ),
+            (
+                "overflow_pos_exp",
+                '{"batch_id": "abc123", "x": 1e9999, "mmr_checkpoint": {"v": 1}}\n',
+            ),
+            (
+                "overflow_neg_exp",
+                '{"batch_id": "abc123", "x": -1e9999, "mmr_checkpoint": {"v": 1}}\n',
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as d:
+            reg = Path(d) / "2026" / "06"
+            reg.mkdir(parents=True)
+            ndjson = reg / "22.ndjson"
+
+            for label, bad_line in bad_lines:
+                with self.subTest(case=label):
+                    ndjson.write_text(bad_line, encoding="utf-8")
+                    self.assertFalse(batch_anchor.is_already_anchored("abc123", Path(d)))
+                    self.assertFalse(anchor._registry_is_chained(Path(d)))
+                    with self.assertRaises(ValueError):
+                        batch_anchor.load_published_entries(Path(d))
+                    with self.assertRaises(SystemExit):
+                        vcc._load_entries([ndjson])
+
+            ndjson.write_text(
+                '{"batch_id": "bad", "x": 1e9999, "mmr_checkpoint": {"v": 1}}\n'
+                '{"batch_id": "valid_after", "mmr_checkpoint": {"v": 1}}\n',
+                encoding="utf-8",
+            )
+            self.assertTrue(batch_anchor.is_already_anchored("valid_after", Path(d)))
+            self.assertTrue(anchor._registry_is_chained(Path(d)))
+
 
 class TestAnchorGroup(unittest.TestCase):
     def _run(self, dry_run=False, canonicalization_id=batch_anchor.DEFAULT_CANONICALIZATION):
