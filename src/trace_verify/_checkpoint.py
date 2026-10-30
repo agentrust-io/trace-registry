@@ -60,8 +60,17 @@ def entry_leaf_digest(entry: dict) -> bytes:
     rather than each re-deriving the same bytes, so the two sides cannot
     silently drift apart.
     """
+    if not isinstance(entry, dict):
+        raise ValueError("entry must be a JSON object")
     body = {k: v for k, v in entry.items() if k != "mmr_checkpoint"}
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    from trace_verify._verify import anchor_profile_violation
+
+    violation = anchor_profile_violation(body)
+    if violation is not None:
+        raise ValueError(f"entry is outside the anchor profile: {violation}")
+    canonical = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
     return hashlib.sha256(canonical.encode("ascii")).digest()
 
 
@@ -352,7 +361,13 @@ def verify_chain_against_entries(entries: list[dict]) -> list[str]:
         cp = entry.get(CHECKPOINT_KIND)
         if not isinstance(cp, dict):
             continue
-        _mmr.add_leaf(store, _mmr.leaf_hash(entry_leaf_digest(entry)))
+        batch_id = entry.get("batch_id", "?")
+        try:
+            digest = entry_leaf_digest(entry)
+        except (ValueError, TypeError, RecursionError) as exc:
+            errors.append(f"batch_id={batch_id!r}: malformed entry body: {exc}")
+            continue
+        _mmr.add_leaf(store, _mmr.leaf_hash(digest))
         actual_size = store.size()
         actual_root = _mmr.root_from_peaks(
             [store.node(p) for p in _mmr.peaks(actual_size)]
@@ -360,7 +375,6 @@ def verify_chain_against_entries(entries: list[dict]) -> list[str]:
 
         claimed_size = cp.get("mmr_size")
         claimed_root = cp.get("root")
-        batch_id = entry.get("batch_id", "?")
 
         # type() rather than ==: True == 1, so a boolean size used to match.
         if type(claimed_size) is not int or actual_size != claimed_size:

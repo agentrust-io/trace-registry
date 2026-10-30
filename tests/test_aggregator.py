@@ -644,6 +644,64 @@ class TestHTTPServerAsTransmitted(unittest.TestCase):
             server.shutdown()
         self.assertEqual(status, 400)
 
+    def test_aggregator_validates_init_submit_and_entry_leaf_digest_profile(self):
+        from trace_verify._checkpoint import entry_leaf_digest, verify_chain_against_entries
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            for idx, bad_fi in enumerate((True, False, 0, -1.0, float("nan"), float("inf"))):
+                with self.subTest(bad_fi=idx):
+                    with self.assertRaises(ValueError):
+                        TRACEAggregator(tmp / "reg", tmp / "proofs", flush_interval=bad_fi)
+            for idx, bad_mbs in enumerate((True, False, -1, 1.5, "10")):
+                with self.subTest(bad_mbs=idx):
+                    with self.assertRaises(ValueError):
+                        TRACEAggregator(
+                            tmp / "reg",
+                            tmp / "proofs",
+                            flush_interval=10.0,
+                            max_batch_size=bad_mbs,  # type: ignore[arg-type]
+                        )
+
+            agg = _make_agg(tmp)
+            with self.subTest("non_list_claims"):
+                with self.assertRaises(ValueError):
+                    agg.submit({"not": "a-list"})  # type: ignore[arg-type]
+            for idx, bad_to in enumerate((True, False, 0, -1, float("nan"), float("inf"))):
+                with self.subTest(bad_to=idx):
+                    with self.assertRaises(ValueError):
+                        agg.submit([_claim()], timeout=bad_to)
+            with self.subTest("non_bytes_raw_bytes"):
+                with self.assertRaises(ValueError):
+                    agg.submit(
+                        [_claim()],
+                        canonicalization_id="as-transmitted",
+                        raw_bytes=["not-bytes"],  # type: ignore[list-item]
+                    )
+            with self.subTest("mismatched_raw_bytes"):
+                with self.assertRaises(ValueError):
+                    agg.submit(
+                        [_claim()],
+                        canonicalization_id="as-transmitted",
+                        raw_bytes=[b'{"different": 1}'],
+                    )
+
+        for idx, bad_entry in enumerate(
+            (
+                {"batch_id": "b1", "x": float("nan")},
+                {"batch_id": "b1", "x": 1.5},
+                {"batch_id": "b1", "x": 2**53},
+            )
+        ):
+            with self.subTest(bad_entry=idx):
+                with self.assertRaises(ValueError):
+                    entry_leaf_digest(bad_entry)
+                errs = verify_chain_against_entries(
+                    [{**bad_entry, "mmr_checkpoint": {"mmr_size": 1, "root": "aa" * 32}}]
+                )
+                self.assertEqual(len(errs), 1)
+                self.assertIn("malformed entry body", errs[0])
+
 
 if __name__ == "__main__":
     unittest.main()
