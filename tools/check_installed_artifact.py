@@ -59,22 +59,26 @@ WITNESS_KEY = "39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5"
 
 def check_chain(command, source_root):
     entry = source_root / "registry/2026/09/01.ndjson"
+    successor = source_root / "registry/2026/09/25.ndjson"
     common = command + ["chain", "--registry-key", REGISTRY_KEY, "--json"]
-    result = subprocess.run(common + [str(entry)], capture_output=True, text=True, timeout=30)
+    result = subprocess.run(common + [str(entry), str(successor)],
+                            capture_output=True, text=True, timeout=30)
     require(result.returncode == 0, f"valid installed chain failed: {result}")
     appraisal = json.loads(result.stdout)
-    require(appraisal.get("verified") is True and appraisal.get("checkpoints") == 1,
+    require(appraisal.get("verified") is True and appraisal.get("checkpoints") == 2,
             f"valid chain was not verified: {appraisal}")
-    # Preserve the signed checkpoint; alter only the entry it commits to.
-    altered = json.loads(entry.read_text())
+    # Keep the first entry intact. Alter the successor's committed content,
+    # preserving both signed checkpoints and their consistency proof.
+    altered = json.loads(successor.read_text())
     altered["producer"] += "-tampered"
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "altered.ndjson"
         path.write_text(json.dumps(altered) + "\n")
-        result = subprocess.run(common + [str(path)], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(common + [str(entry), str(path)],
+                                capture_output=True, text=True, timeout=30)
     require(result.returncode == 1, f"altered chain was not rejected: {result}")
     appraisal = json.loads(result.stdout)
-    require(appraisal.get("verified") is False and appraisal.get("checkpoints") == 1
+    require(appraisal.get("verified") is False and appraisal.get("checkpoints") == 2
             and len(appraisal.get("errors", [])) == 1
             and "recomputed root" in appraisal["errors"][0]
             and "this entry's committed content was altered after it was checkpointed"

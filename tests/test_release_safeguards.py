@@ -170,7 +170,22 @@ class TestInstalledArtifactChecks(unittest.TestCase):
 
     def test_actual_chain_controls(self):
         command = [sys.executable, "-m", "trace_verify"]
-        artifact_check.check_chain(command, ROOT)
+        with patch.object(artifact_check.subprocess, "run", wraps=subprocess.run) as run:
+            artifact_check.check_chain(command, ROOT)
+        self.assertEqual(run.call_count, 2)
+        first = str(ROOT / "registry/2026/09/01.ndjson")
+        second = str(ROOT / "registry/2026/09/25.ndjson")
+        self.assertEqual(run.call_args_list[0].args[0][-2:], [first, second])
+        self.assertEqual(run.call_args_list[1].args[0][-2], first)
+        self.assertTrue(run.call_args_list[1].args[0][-1].endswith("/altered.ndjson"))
+
+    def test_chain_refuses_a_success_response_with_only_one_checkpoint(self):
+        result = subprocess.CompletedProcess(
+            [], 0, json.dumps({"verified": True, "checkpoints": 1}), "")
+        with patch.object(artifact_check.subprocess, "run", return_value=result) as run:
+            with self.assertRaisesRegex(RuntimeError, "valid chain was not verified"):
+                artifact_check.check_chain(["fake-cli"], ROOT)
+        self.assertEqual(run.call_count, 1)
 
     def test_actual_receipt_controls(self):
         artifact_check.check_receipt([sys.executable, "-m", "trace_verify"], ROOT, True)
@@ -181,7 +196,7 @@ class TestInstalledArtifactChecks(unittest.TestCase):
             for accepted in (True, False):
                 with self.subTest(check=check, accepted=accepted):
                     result = subprocess.CompletedProcess([], 0 if accepted else 1,
-                        json.dumps({"verified": accepted, "checkpoints": 1, "leaf_index": 936,
+                        json.dumps({"verified": accepted, "checkpoints": 2, "leaf_index": 936,
                                     "checks": {"receipt_signature_and_inclusion": True}}), "")
                     with patch.object(artifact_check.subprocess, "run", return_value=result):
                         with self.assertRaises(RuntimeError):
@@ -189,8 +204,8 @@ class TestInstalledArtifactChecks(unittest.TestCase):
 
     def test_chain_rejects_an_unrelated_root_error(self):
         responses = [
-            subprocess.CompletedProcess([], 0, json.dumps({"verified": True, "checkpoints": 1}), ""),
-            subprocess.CompletedProcess([], 1, json.dumps({"verified": False, "checkpoints": 1,
+            subprocess.CompletedProcess([], 0, json.dumps({"verified": True, "checkpoints": 2}), ""),
+            subprocess.CompletedProcess([], 1, json.dumps({"verified": False, "checkpoints": 2,
                                                          "errors": ["invalid root encoding"]}), ""),
         ]
         with patch.object(artifact_check.subprocess, "run", side_effect=responses):
