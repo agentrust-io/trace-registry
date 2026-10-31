@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import hashlib
+import copy
 from pathlib import Path
 import sys
 import unittest
@@ -52,7 +54,48 @@ class PortableCorpusTests(unittest.TestCase):
                 runner.check_reply(case, reply)
 
     def test_case_id_and_expectation_integrity(self):
-        for cases in ([CORPUS["cases"][0]] * 2,
-                      [{**CORPUS["cases"][0], "expected": 1}]):
+        for cases in ([CORPUS["cases"][0], CORPUS["cases"][0], *CORPUS["cases"][2:]],
+                      [{**CORPUS["cases"][0], "expected": 1}, *CORPUS["cases"][1:]]):
             with self.assertRaises(ValueError):
                 runner.run({**CORPUS, "cases": cases}, [sys.executable, str(ROOT / "tools/conformance_adapter.py")])
+
+    def test_missing_operation_domain_is_rejected(self):
+        for operation in {case["operation"] for case in CORPUS["cases"]}:
+            cases = [case for case in CORPUS["cases"] if case["operation"] != operation]
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "inventory"):
+                runner.run({**CORPUS, "cases": cases}, [sys.executable, "-c", "raise AssertionError()"])
+
+    def test_duplicate_reply_members_are_rejected_in_subprocess(self):
+        for key in ("id", "accepted"):
+            code = ("import json,sys; r=json.load(sys.stdin); "
+                    "s=json.dumps({'id':r['id'],'accepted':True}); "
+                    f"print(s[:-1]+','+json.dumps({key!r})+':'+json.dumps(r['id'] if {key!r}=='id' else True)+'}}')")
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "duplicate JSON"):
+                runner.run(CORPUS, [sys.executable, "-c", code])
+
+    def test_exact_inventory_and_opaque_ids(self):
+        self.assertEqual(len(CORPUS["cases"]), 28)
+        self.assertEqual([c["id"] for c in CORPUS["cases"]],
+                         [f"case-{i:03d}" for i in range(1, 29)])
+
+    def test_multileaf_vectors_match_independent_reference(self):
+        # Bounded RFC 6962 reference; never calls the production tree generator.
+        def digest(data):
+            return hashlib.sha256(data).digest()
+        claims = [{"record_id": f"multi-{i}"} for i in range(3)]
+        leaves = [digest(b"\x00" + json.dumps(c, sort_keys=True, separators=(",", ":")).encode())
+                  for c in claims]
+        pair = digest(b"\x01" + leaves[0] + leaves[1])
+        triple = digest(b"\x01" + pair + leaves[2])
+        expected = []
+        for count, paths, root in ((2, [[leaves[1]], [leaves[0]]], pair),
+                                   (3, [[leaves[1], leaves[2]], [leaves[0], leaves[2]], [pair]], triple)):
+            for index, path in enumerate(paths):
+                data = {"claim": claims[index], "leaf_index": index, "leaf_count": count,
+                        "audit_path": [p.hex() for p in path], "root": root.hex(),
+                        "canonicalization_id": "sorted-key"}
+                expected.append((data, True))
+                bad = copy.deepcopy(data)
+                bad["audit_path"][0] = "00" * 32
+                expected.append((bad, False))
+        self.assertEqual([(c["input"], c["expected"]) for c in CORPUS["cases"][18:]], expected)

@@ -3,7 +3,7 @@
   "scope": "bounded offline Boolean verification; not full TRACE conformance",
   "cases": [
     {
-      "id": "batch-sorted-valid",
+      "id": "case-001",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -21,7 +21,7 @@
       "expected": true
     },
     {
-      "id": "batch-wrong-root",
+      "id": "case-002",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -39,7 +39,7 @@
       "expected": false
     },
     {
-      "id": "batch-wrong-position",
+      "id": "case-003",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -57,7 +57,7 @@
       "expected": false
     },
     {
-      "id": "batch-extra-sibling",
+      "id": "case-004",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -77,7 +77,7 @@
       "expected": false
     },
     {
-      "id": "batch-wire-valid",
+      "id": "case-005",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -96,7 +96,7 @@
       "expected": true
     },
     {
-      "id": "batch-wire-reserialized",
+      "id": "case-006",
       "operation": "batch_inclusion",
       "input": {
         "claim": {
@@ -115,7 +115,7 @@
       "expected": false
     },
     {
-      "id": "producer-valid",
+      "id": "case-007",
       "operation": "producer_signature",
       "input": {
         "claim": {
@@ -140,7 +140,7 @@
       "expected": true
     },
     {
-      "id": "producer-tamper",
+      "id": "case-008",
       "operation": "producer_signature",
       "input": {
         "claim": {
@@ -165,7 +165,7 @@
       "expected": false
     },
     {
-      "id": "producer-unregistered",
+      "id": "case-009",
       "operation": "producer_signature",
       "input": {
         "claim": {
@@ -190,7 +190,7 @@
       "expected": false
     },
     {
-      "id": "producer-resigned-mismatch",
+      "id": "case-010",
       "operation": "producer_signature",
       "input": {
         "claim": {
@@ -215,7 +215,7 @@
       "expected": false
     },
     {
-      "id": "mmr-inclusion-valid",
+      "id": "case-011",
       "operation": "mmr_inclusion",
       "input": {
         "root": "977bb28753f0aee8ae1650a0997c3798030ffcb4ed5916dfbd8e5d0752383d31",
@@ -240,7 +240,7 @@
       "expected": true
     },
     {
-      "id": "mmr-inclusion-changed-body",
+      "id": "case-012",
       "operation": "mmr_inclusion",
       "input": {
         "root": "977bb28753f0aee8ae1650a0997c3798030ffcb4ed5916dfbd8e5d0752383d31",
@@ -265,7 +265,7 @@
       "expected": false
     },
     {
-      "id": "mmr-inclusion-wrong-position",
+      "id": "case-013",
       "operation": "mmr_inclusion",
       "input": {
         "root": "977bb28753f0aee8ae1650a0997c3798030ffcb4ed5916dfbd8e5d0752383d31",
@@ -290,7 +290,7 @@
       "expected": false
     },
     {
-      "id": "mmr-consistency-valid",
+      "id": "case-014",
       "operation": "mmr_consistency",
       "input": {
         "old_root": "c7cb4c53771996109cb0981c8bd865e06758e7eb67227d507f6aa708fc8e8362",
@@ -319,7 +319,7 @@
       "expected": true
     },
     {
-      "id": "mmr-consistency-wrong-prefix",
+      "id": "case-015",
       "operation": "mmr_consistency",
       "input": {
         "old_root": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -348,7 +348,7 @@
       "expected": false
     },
     {
-      "id": "checkpoint-signature-valid",
+      "id": "case-016",
       "operation": "checkpoint_signature",
       "input": {
         "checkpoint": {
@@ -368,7 +368,7 @@
       "expected": true
     },
     {
-      "id": "checkpoint-tampered-root",
+      "id": "case-017",
       "operation": "checkpoint_signature",
       "input": {
         "checkpoint": {
@@ -388,7 +388,7 @@
       "expected": false
     },
     {
-      "id": "checkpoint-untrusted-key",
+      "id": "case-018",
       "operation": "checkpoint_signature",
       "input": {
         "checkpoint": {
@@ -406,6 +406,180 @@
         "trusted_key_id": "2222222222222222222222222222222222222222222222222222222222222222"
       },
       "expected": false
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-0"
+        },
+        "leaf_index": 0,
+        "leaf_count": 2,
+        "audit_path": [
+          "077897e486d4a470e895ce4461b91dc4ef93b7272dc601cb93f3315a1f6ba0b0"
+        ],
+        "root": "44caa68fa2169b2c6daa1bc743a6f091c3fc241f86fa5a2222d92ae926166946",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": true,
+      "id": "case-019"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-0"
+        },
+        "leaf_index": 0,
+        "leaf_count": 2,
+        "audit_path": [
+          "0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "root": "44caa68fa2169b2c6daa1bc743a6f091c3fc241f86fa5a2222d92ae926166946",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": false,
+      "id": "case-020"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-1"
+        },
+        "leaf_index": 1,
+        "leaf_count": 2,
+        "audit_path": [
+          "631473486ba1ba4c999b0aa96e110c9eff55dac0c35b3b253af46ac5aff8519c"
+        ],
+        "root": "44caa68fa2169b2c6daa1bc743a6f091c3fc241f86fa5a2222d92ae926166946",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": true,
+      "id": "case-021"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-1"
+        },
+        "leaf_index": 1,
+        "leaf_count": 2,
+        "audit_path": [
+          "0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "root": "44caa68fa2169b2c6daa1bc743a6f091c3fc241f86fa5a2222d92ae926166946",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": false,
+      "id": "case-022"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-0"
+        },
+        "leaf_index": 0,
+        "leaf_count": 3,
+        "audit_path": [
+          "077897e486d4a470e895ce4461b91dc4ef93b7272dc601cb93f3315a1f6ba0b0",
+          "eb609dd02ccab04e29b84a70670f9f8f4d07b95e30fb19dfc4e76f8c3c5975c7"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": true,
+      "id": "case-023"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-0"
+        },
+        "leaf_index": 0,
+        "leaf_count": 3,
+        "audit_path": [
+          "0000000000000000000000000000000000000000000000000000000000000000",
+          "eb609dd02ccab04e29b84a70670f9f8f4d07b95e30fb19dfc4e76f8c3c5975c7"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": false,
+      "id": "case-024"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-1"
+        },
+        "leaf_index": 1,
+        "leaf_count": 3,
+        "audit_path": [
+          "631473486ba1ba4c999b0aa96e110c9eff55dac0c35b3b253af46ac5aff8519c",
+          "eb609dd02ccab04e29b84a70670f9f8f4d07b95e30fb19dfc4e76f8c3c5975c7"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": true,
+      "id": "case-025"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-1"
+        },
+        "leaf_index": 1,
+        "leaf_count": 3,
+        "audit_path": [
+          "0000000000000000000000000000000000000000000000000000000000000000",
+          "eb609dd02ccab04e29b84a70670f9f8f4d07b95e30fb19dfc4e76f8c3c5975c7"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": false,
+      "id": "case-026"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-2"
+        },
+        "leaf_index": 2,
+        "leaf_count": 3,
+        "audit_path": [
+          "44caa68fa2169b2c6daa1bc743a6f091c3fc241f86fa5a2222d92ae926166946"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": true,
+      "id": "case-027"
+    },
+    {
+      "operation": "batch_inclusion",
+      "input": {
+        "claim": {
+          "record_id": "multi-2"
+        },
+        "leaf_index": 2,
+        "leaf_count": 3,
+        "audit_path": [
+          "0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "root": "23396733b8035a9a1fdbe68b252c0f6e4668ee355b82a16c74d482f5d8a5fa82",
+        "canonicalization_id": "sorted-key"
+      },
+      "expected": false,
+      "id": "case-028"
     }
   ]
 }

@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from trace_verify._verify import loads_unique
+
 
 def check_reply(case, reply):
     if (not isinstance(reply, dict) or set(reply) != {"id", "accepted"}
@@ -19,6 +22,14 @@ def check_reply(case, reply):
 def run(corpus, command):
     if corpus.get("format") != "agentrust-verifier-corpus-v1" or not corpus.get("cases"):
         raise ValueError("unsupported or empty corpus")
+    domains = {}
+    for case in corpus["cases"]:
+        domains.setdefault(case["operation"], set()).add(case["expected"])
+    expected_domains = {"batch_inclusion", "producer_signature", "mmr_inclusion",
+                        "mmr_consistency", "checkpoint_signature"}
+    if (len(corpus["cases"]) != 28 or set(domains) != expected_domains
+            or any(outcomes != {True, False} for outcomes in domains.values())):
+        raise ValueError("incomplete corpus inventory")
     ids = set()
     for case in corpus["cases"]:
         if case["id"] in ids or type(case["expected"]) is not bool:
@@ -29,7 +40,7 @@ def run(corpus, command):
                                 capture_output=True, timeout=5, check=False)
         if result.returncode:
             raise ValueError(f"{case['id']}: adapter exited {result.returncode}: {result.stderr[:200]}")
-        check_reply(case, json.loads(result.stdout))
+        check_reply(case, loads_unique(result.stdout))
     return len(ids)
 
 
