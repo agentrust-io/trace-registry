@@ -41,7 +41,11 @@ verification, staged-record dry runs and the test suite still run.
 
 Manual dispatch defaults to build-only. It builds and checks the wheel and sdist,
 installs each in a separate clean environment, and exercises the installed CLI outside
-the checkout with both valid evidence and a wrong anchor root. The resulting files are
+the checkout with both valid evidence and a wrong anchor root. It also verifies a
+two-checkpoint chain, including its adjacent-checkpoint consistency proof, and
+refuses an altered second entry with both signed checkpoints preserved. Before installing the hash-pinned
+witness dependencies, it checks the base CLI’s missing-extra diagnostic; afterward
+it verifies an archived witness receipt and refuses an unrelated witness key. The resulting files are
 uploaded together. Only a published release or an explicit `dry_run=false` dispatch
 on the exact version tag can reach the separate PyPI job. That job downloads those
 checked artifacts and holds the `pypi` environment and OIDC permission; build-only
