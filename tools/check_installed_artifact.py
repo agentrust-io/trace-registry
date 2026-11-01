@@ -53,11 +53,79 @@ def check_cli(command, source_root, expected_version):
             f"wrong rejection for invalid anchor: {appraisal}")
 
 
+REGISTRY_KEY = "bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90"
+WITNESS_KEY = "39bb654c9dc0afe1c0edef0deffaa69099b8518836c9ba26e0491535840f96b5"
+
+
+def check_chain(command, source_root):
+    entry = source_root / "registry/2026/09/01.ndjson"
+    successor = source_root / "registry/2026/09/25.ndjson"
+    common = command + ["chain", "--registry-key", REGISTRY_KEY, "--json"]
+    result = subprocess.run(common + [str(entry), str(successor)],
+                            capture_output=True, text=True, timeout=30)
+    require(result.returncode == 0, f"valid installed chain failed: {result}")
+    appraisal = json.loads(result.stdout)
+    require(appraisal.get("verified") is True and appraisal.get("checkpoints") == 2,
+            f"valid chain was not verified: {appraisal}")
+    # Keep the first entry intact. Alter the successor's committed content,
+    # preserving both signed checkpoints and their consistency proof.
+    altered = json.loads(successor.read_text())
+    altered["producer"] += "-tampered"
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "altered.ndjson"
+        path.write_text(json.dumps(altered) + "\n")
+        result = subprocess.run(common + [str(entry), str(path)],
+                                capture_output=True, text=True, timeout=30)
+    require(result.returncode == 1, f"altered chain was not rejected: {result}")
+    appraisal = json.loads(result.stdout)
+    require(appraisal.get("verified") is False and appraisal.get("checkpoints") == 2
+            and len(appraisal.get("errors", [])) == 1
+            and "recomputed root" in appraisal["errors"][0]
+            and "this entry's committed content was altered after it was checkpointed"
+            in appraisal["errors"][0],
+            f"wrong rejection for altered chain: {appraisal}")
+
+
+def check_receipt(command, source_root, witness):
+    evidence = source_root / "docs/evidence/witness-2026-09-07"
+    common = command + ["receipt", "--checkpoint", str(evidence / "checkpoint-1.json"),
+                        "--response", str(evidence / "witness-post.json"),
+                        "--expected-log-id", "trace-registry/v1",
+                        "--registry-key", REGISTRY_KEY, "--witness-key"]
+    result = subprocess.run(common + [WITNESS_KEY], capture_output=True, text=True, timeout=30)
+    if not witness:
+        require(result.returncode == 2 and "the witness extra is not installed" in result.stderr
+                and 'pip install "trace-verify[witness]"' in result.stderr
+                and "Traceback" not in result.stderr,
+                f"base install did not explain missing witness extra: {result}")
+        return
+    require(result.returncode == 0, f"valid installed receipt failed: {result}")
+    appraisal = json.loads(result.stdout)
+    require(appraisal.get("verified") is True and appraisal.get("leaf_index") == 936
+            and appraisal.get("checks", {}).get("receipt_signature_and_inclusion") is True,
+            f"valid receipt was not verified: {appraisal}")
+    # Another valid Ed25519 public key, not malformed key material.
+    result = subprocess.run(common + [REGISTRY_KEY], capture_output=True, text=True, timeout=30)
+    require(result.returncode == 1, f"wrong witness key was not rejected: {result}")
+    appraisal = json.loads(result.stdout)
+    require(appraisal.get("verified") is False
+            and appraisal.get("checks", {}).get("checkpoint_signature") is True
+            and "receipt signature/inclusion failed" in appraisal.get("error", ""),
+            f"wrong rejection for witness key: {appraisal}")
+
+
 def main():
+    import argparse
     import trace_verify
 
-    source_root = Path(sys.argv[1]).resolve()
-    expected_version = sys.argv[2]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("source_root", type=Path)
+    parser.add_argument("expected_version")
+    parser.add_argument("--witness", action="store_true")
+    args = parser.parse_args()
+
+    source_root = args.source_root.resolve()
+    expected_version = args.expected_version
     installed = Path(trace_verify.__file__).resolve()
     prefix = Path(sys.prefix).resolve()
     require(not Path.cwd().resolve().is_relative_to(source_root), "check ran in the checkout")
@@ -68,6 +136,8 @@ def main():
     cli = prefix / "bin/trace-verify"
     require(cli.is_file(), "installed console script is missing")
     check_cli([str(cli)], source_root, expected_version)
+    check_chain([str(cli)], source_root)
+    check_receipt([str(cli)], source_root, args.witness)
     print(f"installed artifact verified: {installed}; version={expected_version}")
 
 
