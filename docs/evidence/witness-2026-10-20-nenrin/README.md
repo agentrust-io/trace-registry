@@ -57,11 +57,27 @@ The witness clock at the start of the run. It sits inside the signature, so it b
 python -m pip install opentimestamps-client
 ots info docs/evidence/witness-2026-10-20-nenrin/jidec-127.txt.ots     # shows the attestation at 972264
 ots verify docs/evidence/witness-2026-10-20-nenrin/jidec-127.txt.ots   # needs a Bitcoin node
+ots info docs/evidence/witness-2026-10-20-nenrin/jidec-143.txt.ots     # shows the attestation at 972850
 ```
 
-Entry 127 describes the witness as "independent". That wording is corrected by a later entry, which cites entry 127 and does not edit it: jidec-143.txt (the ledger's entry 143 as served at https://ledger.horizonshield.dev/ledger/143?format=raw) and its proof jidec-143.txt.ots (Bitcoin block 972850). It uses the wording of this README.
+Entry 127 describes the witness as "independent". That wording is corrected by a later entry, which cites entry 127 and does not edit it: jidec-143.txt (the ledger's entry 143 as served at https://ledger.horizonshield.dev/ledger/143?format=raw, proof also at https://ledger.horizonshield.dev/ledger/143/ots). It uses the wording of this README.
 
-So the first tree head, the witness key and both receipts existed before 2026-10-20 05:09:57 UTC. The anchor bounds the time from above only. `tests/test_witness_receipt_nenrin.py` checks steps 1 and 2 and that the proof commits to that SHA-256, offline; checking the block header itself needs a node or a block explorer.
+So the first tree head, the witness key and both receipts existed before 2026-10-20 05:09:57 UTC. The anchor bounds the time from above only.
+
+## Two anchors, two heights
+
+The packet holds two anchored ledger entries. Each has its own proof and its own Bitcoin height:
+
+| record | role | record SHA-256 | proof | Bitcoin height |
+|---|---|---|---|---|
+| `jidec-127.txt` | entry 127: fixes the witness key and the first tree head | `6d8ff0fbc1e2d3d0e3ef2e03b22be891c0cd380dba80d16153861894ec4ced67` | `jidec-127.txt.ots` | 972264 |
+| `jidec-143.txt` | entry 143: corrects how entry 127 describes the witness | `79837a3a2e557c34ec194f940ca2fd1f1934eb0874fed8b48d84738dde5b4eed` | `jidec-143.txt.ots` | 972850 |
+
+Block 972850 has merkle root `bfb0efe3c54ef54dc8a7101d028b93e93be3b6e8e58fffd7ffd6cd5d27deb31c` and block time 2026-10-24 00:13:42 UTC.
+
+Inside `jidec-143.txt`, the line `stamped to      Bitcoin block 972264` sits in the "What it corrects" block. It names the anchor of entry 127, the entry being corrected. It is not the anchor of entry 143. Entry 143's own proof is `jidec-143.txt.ots`, at height 972850. `jidec-143.txt` is the anchored record and is not edited.
+
+`tests/test_witness_receipt_nenrin.py` checks this offline, for each entry separately: the record's SHA-256, the proof's OpenTimestamps header (magic, version 1, file hash op `0x08`) and the 32-byte digest that follows it, and that the proof holds exactly one Bitcoin attestation, at the height in the table. For entry 127 it also checks steps 1 and 2 above. It checks that entry 143 cites entry 127's SHA-256, that the height named in the "What it corrects" block of `jidec-143.txt` is the height of entry 127's proof and not of entry 143's, that this table matches the proofs, and that `SHA256SUMS` matches the files. A correction proof that is swapped for entry 127's, truncated, or carries the other height fails. These are structural reads of the proof bytes. The tests do not evaluate the full operation chain, and checking the block header itself needs a node or a block explorer.
 
 ## Limits
 
