@@ -90,11 +90,10 @@ class CaptureTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
-        with patch.object(cwr.urllib.request, "urlopen", transport):
-            code = cwr.capture(
-                checkpoint_path=PACKET / "checkpoint-1.json", out=out, witness_base=BASE,
-                expected_log_id=LOG_ID, registry_key=REGISTRY_KEY, witness_key=WITNESS_KEY,
-                **kwargs)
+        code = cwr.capture(
+            checkpoint_path=PACKET / "checkpoint-1.json", out=out, witness_base=BASE,
+            expected_log_id=LOG_ID, registry_key=REGISTRY_KEY, witness_key=WITNESS_KEY,
+            opener=transport, **kwargs)
         manifest = json.loads((out / "capture-manifest.json").read_text())
         verification = json.loads((out / "verification.json").read_text())
         return code, out, manifest, verification, transport
@@ -197,12 +196,11 @@ class CaptureTests(unittest.TestCase):
         transport = _Transport({})
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        with patch.object(cwr.urllib.request, "urlopen", transport):
-            with self.assertRaises(ValueError) as caught:
-                cwr.capture(checkpoint_path=PACKET / "checkpoint-1.json",
-                            out=Path(tmp.name) / "capture", witness_base="http://witness.example",
-                            expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
-                            witness_key=WITNESS_KEY)
+        with self.assertRaises(ValueError) as caught:
+            cwr.capture(checkpoint_path=PACKET / "checkpoint-1.json",
+                        out=Path(tmp.name) / "capture", witness_base="http://witness.example",
+                        expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
+                        witness_key=WITNESS_KEY, opener=transport)
         self.assertIn("https only", str(caught.exception))
         self.assertEqual(transport.seen, [])
 
@@ -301,12 +299,11 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
         extracted, _ = cwr.checkpoint_from_registry_entry(self.ENTRY)
-        with patch.object(cwr.urllib.request, "urlopen", transport):
-            code = cwr.capture(
-                checkpoint_bytes=extracted, out=out, witness_base=BASE,
-                expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
-                witness_key=WITNESS_KEY,
-                source_path="registry/2026/09/01.ndjson")
+        code = cwr.capture(
+            checkpoint_bytes=extracted, out=out, witness_base=BASE,
+            expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
+            witness_key=WITNESS_KEY, opener=transport,
+            source_path="registry/2026/09/01.ndjson")
         self.assertEqual(code, 0)
         verification = json.loads((out / "verification.json").read_text())
         self.assertTrue(verification["verified"], verification)
@@ -323,7 +320,8 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
-        with patch.object(cwr.urllib.request, "urlopen", transport):
+        with patch.object(cwr, "_build_opener") as build_opener:
+            build_opener.return_value.open = transport
             code = cwr.main([
                 "--registry-entry", str(self.ENTRY),
                 "--out", str(out),
@@ -392,6 +390,87 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
                 cwr.checkpoint_from_registry_entry(path)
         self.assertIn("missing signed field", str(ctx.exception))
         self.assertIn("root", str(ctx.exception))
+
+    def test_request_rejects_redirects_to_http_or_disallowed_hosts(self):
+        import email.message
+        import io
+        import urllib.request
+        import urllib.response
+
+        allowed_url = "https://witness.agentactioncapsule.org/v1/inclusion/abc"
+        allowed_hosts = frozenset({"witness.agentactioncapsule.org"})
+
+        for target in (
+            "http://witness.agentactioncapsule.org/v1/inclusion/abc",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://evil.example/inclusion",
+        ):
+            class FakeRedirectNetwork(urllib.request.BaseHandler):
+                handler_order = 100
+
+                def https_open(self, req):
+                    headers = email.message.Message()
+                    if req.full_url == allowed_url:
+                        headers["Location"] = target
+                        resp = urllib.response.addinfourl(
+                            io.BytesIO(b""), headers, req.full_url, 302
+                        )
+                        resp.msg = "Found"
+                        return resp
+                    resp = urllib.response.addinfourl(
+                        io.BytesIO(b'{"receipt_b64":"ok"}'), headers, req.full_url, 200
+                    )
+                    resp.msg = "OK"
+                    return resp
+
+                def http_open(self, req):
+                    headers = email.message.Message()
+                    resp = urllib.response.addinfourl(
+                        io.BytesIO(b'{"receipt_b64":"ok"}'), headers, req.full_url, 200
+                    )
+                    resp.msg = "OK"
+                    return resp
+
+            opener = urllib.request.build_opener(
+                FakeRedirectNetwork, cwr._make_redirect_handler(allowed_hosts)
+            )
+            obs = cwr.request(allowed_url, allowed_hosts, timeout=5, opener=opener)
+            self.assertEqual(obs["status"], 302, target)
+
+            # Also exercise the default request(..., opener=None) path directly
+            def fake_https_open(_self_handler, req):
+                headers = email.message.Message()
+                if req.full_url == allowed_url:
+                    headers["Location"] = target
+                    resp = urllib.response.addinfourl(
+                        io.BytesIO(b""), headers, req.full_url, 302
+                    )
+                    resp.msg = "Found"
+                    return resp
+                raise AssertionError(f"unexpected follow to {req.full_url}")
+
+            with patch.object(urllib.request.HTTPSHandler, "https_open", fake_https_open):
+                obs_default = cwr.request(allowed_url, allowed_hosts, timeout=5)
+            self.assertEqual(obs_default["status"], 302, target)
+
+    def test_duplicate_keys_and_nonfinite_json_rejected_in_capture_helpers(self):
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","receipt_b64":"b"}'))
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","x":NaN}'))
+        self.assertIsNone(cwr.receipt_of(b'{"receipt_b64":"a","x":Infinity}'))
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dup.ndjson"
+            p.write_text('{"batch_id":"b1","batch_id":"b2","mmr_checkpoint":{}}\n', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                cwr.checkpoint_from_registry_entry(p)
+            for idx, const in enumerate(("NaN", "Infinity", "-Infinity")):
+                bad_p = Path(tmp) / f"nonfinite_{idx}.ndjson"
+                bad_p.write_text(
+                    f'{{"batch_id":"b1","x":{const},"mmr_checkpoint":{{}}}}\n',
+                    encoding="utf-8",
+                )
+                with self.assertRaises(SystemExit):
+                    cwr.checkpoint_from_registry_entry(bad_p)
+
 
 
 if __name__ == "__main__":

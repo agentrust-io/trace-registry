@@ -23,7 +23,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -40,10 +42,50 @@ UA = "trace-registry/check-mirrors (github.com/agentrust-io/trace-registry)"
 # hosts and is extended at runtime with the hosts already configured in
 # mirrors.json. file://, http://, and internal/metadata targets are rejected.
 _BASE_ALLOWED_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
+
+
+def _loads_strict(text: str) -> dict:
+    def _unique(pairs: list[tuple[str, object]]) -> dict:
+        out: dict = {}
+        for k, v in pairs:
+            if k in out:
+                raise ValueError(f"duplicate JSON object key: {k!r}")
+            out[k] = v
+        return out
+
+    def _no_nonfinite(token: str) -> object:
+        raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+    parsed = json.loads(text, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
+    if not isinstance(parsed, dict):
+        raise ValueError("expected a JSON object")
+    return parsed
+
+
+def _make_redirect_handler(allowed_hosts: frozenset) -> urllib.request.HTTPRedirectHandler:
+    class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            reason = _check_url_allowed(newurl, allowed_hosts)
+            if reason is not None:
+                raise urllib.error.HTTPError(
+                    req.full_url, code, f"refusing redirect to {newurl}: {reason}", headers, fp
+                )
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return _AllowlistRedirectHandler()
 
 
 def _host_of(url: str) -> str:
     return (urllib.parse.urlparse(url).hostname or "").lower()
+
+
+def _is_non_global_ip(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return not ip.is_global
 
 
 def _allowed_hosts_from_config(config: dict) -> frozenset:
@@ -55,7 +97,7 @@ def _allowed_hosts_from_config(config: dict) -> frozenset:
         api = entry.get("head_api")
         if isinstance(api, str) and urllib.parse.urlparse(api).scheme == "https":
             host = _host_of(api)
-            if host:
+            if host and not _is_non_global_ip(host):
                 hosts.add(host)
     return frozenset(hosts)
 
@@ -69,6 +111,8 @@ def _check_url_allowed(url: str, allowed_hosts: frozenset) -> str | None:
     if parsed.scheme != "https":
         return f"scheme {parsed.scheme!r} not allowed (https only)"
     host = (parsed.hostname or "").lower()
+    if _is_non_global_ip(host):
+        return f"non-global IP literal {host!r} not allowed"
     if host not in allowed_hosts:
         return f"host {host!r} not in allowlist {sorted(allowed_hosts)}"
     return None
@@ -79,26 +123,28 @@ def _fetch_json(url: str, timeout: int, allowed_hosts: frozenset) -> dict:
     if reason is not None:
         raise ValueError(f"refusing to fetch {url}: {reason}")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read().decode("utf-8"))
+    opener = urllib.request.build_opener(_make_redirect_handler(allowed_hosts))
+    with opener.open(req, timeout=timeout) as resp:  # noqa: S310
+        return _loads_strict(resp.read().decode("utf-8"))
 
 
 def _get_head_sha(api_url: str, timeout: int, allowed_hosts: frozenset) -> str:
     """Fetch the HEAD commit SHA from a mirror's API endpoint."""
-    data = _fetch_json(api_url, timeout, allowed_hosts)
+    per_endpoint_hosts = frozenset({_host_of(api_url)}) & allowed_hosts
+    data = _fetch_json(api_url, timeout, per_endpoint_hosts or allowed_hosts)
     sha = data.get("sha")
-    if not isinstance(sha, str) or len(sha) < 7:
+    if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha):
         raise ValueError(f"unexpected response shape: {list(data.keys())}")
-    return sha
+    return sha.lower()
 
 
 def _load_mirrors() -> dict:
     try:
-        return json.loads(MIRRORS_JSON.read_text(encoding="utf-8"))
+        return _loads_strict(MIRRORS_JSON.read_text(encoding="utf-8"))
     except OSError as exc:
         print(f"error: cannot read {MIRRORS_JSON}: {exc}", file=sys.stderr)
         sys.exit(2)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         print(f"error: invalid JSON in {MIRRORS_JSON}: {exc}", file=sys.stderr)
         sys.exit(2)
 
@@ -125,9 +171,6 @@ def _check_one(entry: dict, canonical_sha: str, timeout: int, allowed_hosts: fro
     result["canonical_sha"] = canonical_sha
 
     if mirror_sha == canonical_sha:
-        result["status"] = "in_sync"
-    elif canonical_sha.startswith(mirror_sha) or mirror_sha.startswith(canonical_sha):
-        # abbreviated SHA match
         result["status"] = "in_sync"
     else:
         result["status"] = "diverged"
