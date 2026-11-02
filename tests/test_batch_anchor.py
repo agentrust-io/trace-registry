@@ -161,6 +161,39 @@ class TestIsAlreadyAnchored(unittest.TestCase):
             result = batch_anchor.is_already_anchored("other", Path(d))
         self.assertFalse(result)
 
+    def test_ndjson_loaders_reject_duplicate_keys_nonfinite_and_non_dict_lines(self):
+        import anchor
+        import verify_checkpoint_chain as vcc
+
+        with tempfile.TemporaryDirectory() as d:
+            reg = Path(d) / "2026" / "06"
+            reg.mkdir(parents=True)
+            ndjson = reg / "22.ndjson"
+
+            ndjson.write_text(
+                '[1, 2]\n'
+                '{"batch_id": "forged", "batch_id": "abc123", "mmr_checkpoint": {"v": 1}}\n'
+                '{"batch_id": "nan_entry", "x": NaN, "mmr_checkpoint": {"v": 1}}\n',
+                encoding="utf-8",
+            )
+            self.assertFalse(batch_anchor.is_already_anchored("abc123", Path(d)))
+            self.assertFalse(anchor._registry_is_chained(Path(d)))
+
+            for idx, bad_line in enumerate(
+                (
+                    '{"batch_id": "a", "batch_id": "b"}\n',
+                    '{"batch_id": "a", "x": NaN}\n',
+                    '{"batch_id": "a", "x": Infinity}\n',
+                    '[1, 2]\n',
+                )
+            ):
+                with self.subTest(idx=idx):
+                    ndjson.write_text(bad_line, encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        batch_anchor.load_published_entries(Path(d))
+                    with self.assertRaises(SystemExit):
+                        vcc._load_entries([ndjson])
+
 
 class TestAnchorGroup(unittest.TestCase):
     def _run(self, dry_run=False, canonicalization_id=batch_anchor.DEFAULT_CANONICALIZATION):
