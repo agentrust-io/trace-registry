@@ -123,6 +123,44 @@ class WitnessReceiptTests(unittest.TestCase):
         self.response['receipt_b64'] = base64.b64encode(receipt).decode()
         self.assertFalse(self.check()['verified'])
 
+    def test_non_canonical_hex_signature_or_keys_and_nonfinite_json_rejected(self):
+        import tempfile
+
+        self.assertTrue(self.check()['verified'])
+
+        for bad_sig in (
+            self.cp['signature'].upper(),
+            '  ' + self.cp['signature'],
+            self.cp['signature'][:-2],
+            'zz' * 64,
+        ):
+            with self.subTest(bad_sig=bad_sig):
+                cp = copy.deepcopy(self.cp)
+                cp['signature'] = bad_sig
+                res = self.check(cp=cp)
+                self.assertFalse(res['verified'])
+                self.assertNotIn('checkpoint_signature', res['checks'])
+                self.assertIn('invalid lowercase hex signature', res['error'])
+
+        for key, base in (('witness_key', WITNESS_KEY), ('registry_key', REGISTRY_KEY)):
+            for bad in (base.upper(), '  ' + base, base[:-2], 'zz' * 32):
+                with self.subTest(key=key, bad=bad):
+                    res = self.check(**{key: bad})
+                    self.assertFalse(res['verified'])
+                    self.assertIn(f'invalid lowercase hex {key}', res['error'])
+
+        for bad_json in ('{"x": NaN}', '{"x": Infinity}', '{"x": -Infinity}'):
+            with self.subTest(bad_json=bad_json):
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as fh:
+                    fh.write(bad_json)
+                    tmp = Path(fh.name)
+                try:
+                    with self.assertRaises(ValueError):
+                        load_json(tmp)
+                finally:
+                    tmp.unlink(missing_ok=True)
+
+
 
 if __name__ == '__main__':
     unittest.main()
