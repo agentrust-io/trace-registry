@@ -137,12 +137,13 @@ SAFE_INTEGER_MAX = 2**53 - 1
 
 
 def loads_unique(raw: bytes | str) -> object:
-    """``json.loads`` that refuses duplicate member names.
+    """``json.loads`` that refuses duplicate member names and non-finite constants.
 
     Plain ``json.loads`` keeps the last value for a repeated name, so a claim
     carrying ``"hash"`` twice was signature-checked over one value while its
     transmitted bytes also carried the other, and a first-wins parser reads
-    the one the signature never covered. Raises ValueError on a duplicate.
+    the one the signature never covered. Raises ValueError on a duplicate or
+    non-finite constant.
     """
     def _unique(pairs: list[tuple[str, object]]) -> dict:
         result: dict = {}
@@ -152,7 +153,10 @@ def loads_unique(raw: bytes | str) -> object:
             result[key] = value
         return result
 
-    return json.loads(raw, object_pairs_hook=_unique)
+    def _no_nonfinite(token: str) -> object:
+        raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+    return json.loads(raw, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
 
 
 def anchor_profile_violation(claim: object) -> str | None:
