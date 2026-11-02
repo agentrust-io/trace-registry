@@ -12,6 +12,20 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- **Enforce `registry-anchor-v1` section 1 profile in `canonical_claim_bytes`,
+  reject private JWKs, and harden MMR/JSON parsing (#146).**
+  `canonical_claim_bytes` and `anchor_profile_violation` in `trace_verify` and
+  `tools/` now refuse floats, integers outside `-(2^53-1)..2^53-1`, and unpaired
+  UTF-16 surrogates (`U+D800..U+DFFF`) in object keys and strings.
+  `verify_claim_signature` and `tools/validate_producers.py` reject RFC 7517 /
+  RFC 7518 / RFC 8037 private or symmetric JWK parameters (`d`, `p`, `q`, `dp`,
+  `dq`, `qi`, `oth`, `k`) and non-canonical base64url `x` encodings.
+  `trace_verify._mmr` proof deserialization and verifiers require exact `int`
+  values (`type(v) is int`), and `tools/verify_inclusion.py`,
+  `tools/verify_checkpoint_chain.py`, `tools/validate_registry.py`, and
+  `tools/validate_producers.py` reject duplicate JSON object member names via
+  `loads_unique`.
+
 - Declare `leaf_subject` on new batch entries independently of canonicalization.
   Preserve legacy bytes and require retained input plus inclusion to establish
   an unmarked subject; without retained evidence report `unknown`.
