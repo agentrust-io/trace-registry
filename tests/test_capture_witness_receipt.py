@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
@@ -90,7 +90,7 @@ class CaptureTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
-        with patch.object(cwr.urllib.request, "urlopen", transport):
+        with patch.object(cwr.urllib.request, "build_opener", return_value=Mock(open=transport)):
             code = cwr.capture(
                 checkpoint_path=PACKET / "checkpoint-1.json", out=out, witness_base=BASE,
                 expected_log_id=LOG_ID, registry_key=REGISTRY_KEY, witness_key=WITNESS_KEY,
@@ -197,7 +197,7 @@ class CaptureTests(unittest.TestCase):
         transport = _Transport({})
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        with patch.object(cwr.urllib.request, "urlopen", transport):
+        with patch.object(cwr.urllib.request, "build_opener", return_value=Mock(open=transport)):
             with self.assertRaises(ValueError) as caught:
                 cwr.capture(checkpoint_path=PACKET / "checkpoint-1.json",
                             out=Path(tmp.name) / "capture", witness_base="http://witness.example",
@@ -301,7 +301,7 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
         extracted, _ = cwr.checkpoint_from_registry_entry(self.ENTRY)
-        with patch.object(cwr.urllib.request, "urlopen", transport):
+        with patch.object(cwr.urllib.request, "build_opener", return_value=Mock(open=transport)):
             code = cwr.capture(
                 checkpoint_bytes=extracted, out=out, witness_base=BASE,
                 expected_log_id=LOG_ID, registry_key=REGISTRY_KEY,
@@ -323,7 +323,7 @@ class ExtractFromRegistryEntryTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "capture"
-        with patch.object(cwr.urllib.request, "urlopen", transport):
+        with patch.object(cwr.urllib.request, "build_opener", return_value=Mock(open=transport)):
             code = cwr.main([
                 "--registry-entry", str(self.ENTRY),
                 "--out", str(out),
