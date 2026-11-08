@@ -35,7 +35,18 @@ backlog monitoring and required-versus-best-effort publication remain explicit
 maintainer decisions before scheduled deployment. An inflight record requires
 operator investigation; a live worker must not be presumed dead by a timeout.
 
-Seven tests cover two concurrent workers, restart, crash/inflight refusal,
-lost-acknowledgement exceptions, failed capture, immutable evidence, identity
-binding, and replay of the archived real cryptographic receipt (including a wrong
-witness key). The transport is mocked; no external witness was contacted.
+Tests cover concurrent workers, restart/inflight refusal, lost acknowledgements,
+failed capture, immutable evidence, identity binding and archived cryptographic
+receipt verification. Separate subprocess controls kill workers before claim
+commit, after claim commit, after a durable synthetic effect and after final
+commit, then reopen the database and verify state, evidence retention and retry
+refusal. An uninterrupted worker is the positive twin. SQLite authorization
+faults independently refuse the first or second transaction commit.
+
+A kill before claim commit can leave a pending row and an exclusive evidence
+directory. A later attempt refuses that directory rather than overwriting it;
+operator inspection is required. A synthetic effect followed by a kill or final
+commit refusal leaves an inflight row, not verified or retryable. This is process
+termination and transaction-refusal evidence on local SQLite, not power-loss,
+fsync-failure, storage-device or external-witness recovery evidence. Transport and
+external effects are synthetic; no external witness was contacted.

@@ -48,7 +48,7 @@ class JournalTests(unittest.TestCase):
                 self.journal.submit(self.identity, self.root / 'evidence')
         self.assertEqual(self.journal.status(self.identity)['state'], 'unknown')
 
-    def test_crash_inflight_cannot_be_reclaimed(self):
+    def test_simulated_inflight_state_cannot_be_reclaimed(self):
         with self.journal.connect() as db:
             db.execute("UPDATE submissions SET state='inflight' WHERE id=?", (self.identity,))
         with patch('capture_witness_receipt.capture') as capture:
