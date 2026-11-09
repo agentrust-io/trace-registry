@@ -168,6 +168,59 @@ class TestInstalledArtifactChecks(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "installed CLI version failed"):
                 artifact_check.check_cli(["fake-cli"], ROOT, "0.4.3")
 
+    def test_actual_chain_controls(self):
+        command = [sys.executable, "-m", "trace_verify"]
+        with patch.object(artifact_check.subprocess, "run", wraps=subprocess.run) as run:
+            artifact_check.check_chain(command, ROOT)
+        self.assertEqual(run.call_count, 2)
+        first = str(ROOT / "registry/2026/09/01.ndjson")
+        second = str(ROOT / "registry/2026/09/25.ndjson")
+        self.assertEqual(run.call_args_list[0].args[0][-2:], [first, second])
+        self.assertEqual(run.call_args_list[1].args[0][-2], first)
+        self.assertTrue(run.call_args_list[1].args[0][-1].endswith("/altered.ndjson"))
+
+    def test_chain_refuses_a_success_response_with_only_one_checkpoint(self):
+        result = subprocess.CompletedProcess(
+            [], 0, json.dumps({"verified": True, "checkpoints": 1}), "")
+        with patch.object(artifact_check.subprocess, "run", return_value=result) as run:
+            with self.assertRaisesRegex(RuntimeError, "valid chain was not verified"):
+                artifact_check.check_chain(["fake-cli"], ROOT)
+        self.assertEqual(run.call_count, 1)
+
+    def test_actual_receipt_controls(self):
+        artifact_check.check_receipt([sys.executable, "-m", "trace_verify"], ROOT, True)
+
+    def test_chain_and_receipt_cannot_always_accept_or_reject(self):
+        for check in (artifact_check.check_chain,
+                      lambda command, root: artifact_check.check_receipt(command, root, True)):
+            for accepted in (True, False):
+                with self.subTest(check=check, accepted=accepted):
+                    result = subprocess.CompletedProcess([], 0 if accepted else 1,
+                        json.dumps({"verified": accepted, "checkpoints": 2, "leaf_index": 936,
+                                    "checks": {"receipt_signature_and_inclusion": True}}), "")
+                    with patch.object(artifact_check.subprocess, "run", return_value=result):
+                        with self.assertRaises(RuntimeError):
+                            check(["fake-cli"], ROOT)
+
+    def test_chain_rejects_an_unrelated_root_error(self):
+        responses = [
+            subprocess.CompletedProcess([], 0, json.dumps({"verified": True, "checkpoints": 2}), ""),
+            subprocess.CompletedProcess([], 1, json.dumps({"verified": False, "checkpoints": 2,
+                                                         "errors": ["invalid root encoding"]}), ""),
+        ]
+        with patch.object(artifact_check.subprocess, "run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "wrong rejection for altered chain"):
+                artifact_check.check_chain(["fake-cli"], ROOT)
+
+    def test_missing_extra_does_not_accept_unrelated_failures(self):
+        for code, stderr in ((1, "bad evidence"), (2, "usage: invalid arguments"),
+                             (2, "Traceback: missing module")):
+            with self.subTest(code=code, stderr=stderr):
+                result = subprocess.CompletedProcess([], code, "", stderr)
+                with patch.object(artifact_check.subprocess, "run", return_value=result):
+                    with self.assertRaisesRegex(RuntimeError, "missing witness extra"):
+                        artifact_check.check_receipt(["fake-cli"], ROOT, False)
+
     def test_actual_cli_accepts_control_and_rejects_wrong_anchor(self):
         with patch.object(artifact_check.subprocess, "run", wraps=subprocess.run) as run:
             expected = re.search(r'^version = "([^"]+)"',
