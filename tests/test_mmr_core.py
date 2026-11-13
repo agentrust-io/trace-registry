@@ -104,6 +104,75 @@ class TestConsistencyRoundTrip(unittest.TestCase):
         self.assertFalse(core.verify_consistency(bytes(32), 5, bytes(32), 999999, garbage))
         self.assertFalse(core.verify_consistency(b"bad", 0, b"bad", 0, None))
 
+    def test_exact_int_and_from_dict_validation_across_mmr(self):
+        from enum import IntEnum
+
+        class FakeSize(IntEnum):
+            ONE = 1
+
+        store = _grow(4)
+        size = store.size()
+        root = core.root_from_peaks([store.node(p) for p in core.peaks(size)])
+        inc = core.inclusion_proof(store, 0, size)
+        con = core.consistency_proof(store, 1, size)
+
+        # Positive round-trip controls
+        self.assertEqual(core.InclusionProof.from_dict(inc.to_dict()), inc)
+        self.assertEqual(core.ConsistencyProof.from_dict(con.to_dict()), con)
+
+        # Booleans and IntEnum rejected where exact int is required
+        for idx, bad_int in enumerate((True, False, FakeSize.ONE)):
+            with self.subTest(bad_int=idx):
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.peaks(bad_int)
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.inclusion_proof(store, bad_int, size)
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.inclusion_proof(store, 0, bad_int)
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.consistency_proof(store, bad_int, size)
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.consistency_proof(store, 1, bad_int)
+                self.assertFalse(core.verify_inclusion(root, bad_int, 0, _digest("entry-0"), inc))
+                self.assertFalse(core.verify_inclusion(root, size, bad_int, _digest("entry-0"), inc))
+                self.assertFalse(core.verify_consistency(root, bad_int, root, size, con))
+                self.assertFalse(core.verify_consistency(root, 1, root, bad_int, con))
+
+        inc_d = inc.to_dict()
+        for idx, bad_inc in enumerate(
+            (
+                {**inc_d, "extra": 1},
+                {**inc_d, "v": True},
+                {**inc_d, "v": 2},
+                {**inc_d, "kind": "other"},
+                {**inc_d, "size": "7"},
+                {**inc_d, "leaf_index": False},
+                {**inc_d, "witness": "a" * 64},
+                {**inc_d, "witness": ["AA" * 32]},
+            )
+        ):
+            with self.subTest(bad_inc=idx):
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.InclusionProof.from_dict(bad_inc)
+
+        con_d = con.to_dict()
+        for idx, bad_con in enumerate(
+            (
+                {**con_d, "extra": 1},
+                {**con_d, "v": True},
+                {**con_d, "v": 2},
+                {**con_d, "kind": "other"},
+                {**con_d, "size_a": "1"},
+                {**con_d, "size_b": True},
+                {**con_d, "old_peaks": "a" * 64},
+                {**con_d, "old_peaks": ["AA" * 32]},
+                {**con_d, "witness": ["a" * 64]},
+            )
+        ):
+            with self.subTest(bad_con=idx):
+                with self.assertRaises(core.InvalidArgumentError):
+                    core.ConsistencyProof.from_dict(bad_con)
+
 
 if __name__ == "__main__":
     unittest.main()
