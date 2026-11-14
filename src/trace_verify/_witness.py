@@ -32,7 +32,15 @@ def load_json(path):
                 raise ValueError('duplicate JSON key: ' + key)
             result[key] = value
         return result
-    return json.loads(Path(path).read_bytes(), object_pairs_hook=unique)
+
+    def no_nonfinite(token):
+        raise ValueError('non-finite JSON constant: ' + token)
+
+    return json.loads(
+        Path(path).read_bytes(),
+        object_pairs_hook=unique,
+        parse_constant=no_nonfinite,
+    )
 
 
 
@@ -117,11 +125,8 @@ def signing_body_digest(body):
 
 
 def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
-    import cbor2
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from scitt_cose.receipt import verify_receipt
-    from scitt_cose.cose_sign1 import strict_decode
 
     result = {'verified': False, 'checks': {}, 'limits': {
         'witness_time_established': False,
@@ -154,12 +159,31 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
             raise ValueError('checkpoint timestamp must have a timezone')
         checkpoint_epoch = int(checkpoint_time.timestamp())
         checks['checkpoint_structure'] = True
+        if (
+            not isinstance(registry_key, str)
+            or len(registry_key) != 64
+            or any(c not in '0123456789abcdef' for c in registry_key)
+        ):
+            raise ValueError('invalid lowercase hex registry_key')
+        if (
+            not isinstance(witness_key, str)
+            or len(witness_key) != 64
+            or any(c not in '0123456789abcdef' for c in witness_key)
+        ):
+            raise ValueError('invalid lowercase hex witness_key')
         if body['log_id'] != expected_log_id or body['key_id'] != registry_key:
             raise ValueError('checkpoint does not match supplied registry identity policy')
         checks['registry_identity'] = True
+        sig_hex = checkpoint.get('signature')
+        if (
+            not isinstance(sig_hex, str)
+            or len(sig_hex) != 128
+            or any(c not in '0123456789abcdef' for c in sig_hex)
+        ):
+            raise ValueError('invalid lowercase hex signature')
         digest = signing_body_digest(body)
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(registry_key)).verify(
-            bytes.fromhex(checkpoint['signature']), digest.hex().encode('ascii'))
+            bytes.fromhex(sig_hex), digest.hex().encode('ascii'))
         checks['checkpoint_signature'] = True
         # The JSON route registers the 32-byte signing-body digest as an
         # opaque statement. Its legacy entry_hash is SHA256(those 32 bytes).
@@ -168,6 +192,9 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
             raise ValueError('receipt response is not bound to this checkpoint signing body')
         checks['checkpoint_receipt_binding'] = True
         receipt = base64.b64decode(response['receipt_b64'], validate=True)
+        import cbor2
+        from scitt_cose.receipt import verify_receipt
+        from scitt_cose.cose_sign1 import strict_decode
         # Restrict this adapter to the observed, reviewed stage-1 profile.
         # New algorithms, signed metadata or proof structures need review.
         decoded = strict_decode(receipt)
