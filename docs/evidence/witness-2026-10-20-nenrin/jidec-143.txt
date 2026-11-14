@@ -1,0 +1,30 @@
+# nenrin-registry-witness-v0: correction to JIDEC entry 127 (how the witness is described)
+
+**Status:** a correction, anchored to the JIDEC ledger. It cites JIDEC entry 127 and does not edit it. Both stay readable.
+
+## What it corrects
+
+    corrects        JIDEC entry 127, "nenrin-registry-witness-v0: enrollment and first tree head (registry-witness-v0)"
+    claim sha256    6d8ff0fbc1e2d3d0e3ef2e03b22be891c0cd380dba80d16153861894ec4ced67
+    stamped to      Bitcoin block 972264
+    copies          agentrust-io/trace-registry, docs/evidence/witness-2026-10-20-nenrin/jidec-127.txt and jidec-127.txt.ots
+
+The sentence corrected, from the status line of entry 127:
+
+    HORIZON SHIELD (The HORIZONs Co., Ltd.) operates an independent witness for the TRACE registry checkpoint chain
+
+## The wording that replaces it
+
+HORIZON SHIELD (The HORIZONs Co., Ltd.) operates a second witness for the TRACE registry checkpoint chain (agentrust-io/trace-registry, log id trace-registry/v1). It is a party other than the registry operator, with its own key, and it also holds one of the registry's registered mirrors. Nothing in entry 127 or in the evidence packet shows a track record, or independence beyond being a different operator with its own key. HORIZON SHIELD does not describe itself as independent.
+
+This follows the evidence packet's README. The registry's LIMITATIONS.md also calls it a second witness.
+
+## What stays as it is
+
+Every key, digest, receipt and tree head in entry 127, and its section 4 (the honest boundary). This record changes no hash and no receipt.
+
+## Why
+
+Raised in the review of agentrust-io/trace-registry#143 on 2026-10-23: entry 127 and the packet said two different things at once. Entry 127 cannot be edited after anchoring, so the correction is this later entry that cites it.
+
+**The SHA-256 of this document is anchored to the JIDEC ledger and stamped to Bitcoin. After anchoring, this record cannot be altered. Corrections are later entries that cite this one.**
