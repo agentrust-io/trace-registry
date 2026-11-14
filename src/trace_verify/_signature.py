@@ -12,7 +12,6 @@ Requires the 'cryptography' package:
 from __future__ import annotations
 
 import base64
-import json
 import re
 from pathlib import Path
 
@@ -24,6 +23,7 @@ _PRODUCER_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._+\-]*$"
 )
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_FORBIDDEN_JWK_KEYS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
 
 
 def is_valid_producer_id(producer_id: object) -> bool:
@@ -84,6 +84,33 @@ def canonical_body_bytes(claim: dict) -> bytes:
     return rfc8785.dumps(body)
 
 
+def validate_public_key_jwk(public_key_jwk: dict) -> bytes:
+    """Validate an OKP/Ed25519 public JWK and return the raw 32-byte public key.
+
+    Rejects RFC 7517 / RFC 7518 / RFC 8037 private or symmetric key parameters
+    and non-canonical or padded base64url encodings of 'x'.
+    """
+    if not isinstance(public_key_jwk, dict):
+        raise ValueError("public_key_jwk must be a JSON object")
+    forbidden = sorted(_FORBIDDEN_JWK_KEYS.intersection(public_key_jwk))
+    if forbidden:
+        raise ValueError(
+            "public_key_jwk must not contain private or symmetric key "
+            f"parameters: {', '.join(forbidden)}"
+        )
+    if public_key_jwk.get("kty") != "OKP" or public_key_jwk.get("crv") != "Ed25519":
+        raise ValueError("public_key_jwk must be an OKP/Ed25519 key")
+
+    x_b64 = public_key_jwk.get("x")
+    if not isinstance(x_b64, str) or not x_b64:
+        raise ValueError("public_key_jwk has no 'x' coordinate")
+
+    try:
+        return _decode_base64url(x_b64, "public key x", 32)
+    except Exception as exc:
+        raise ValueError(f"cannot load public key: {exc}") from exc
+
+
 def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
     """Return True iff the claim's Ed25519 signature is valid.
 
@@ -100,19 +127,12 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
         raise ValueError("claim has no 'signature' field")
 
     sig = _decode_base64url(sig_b64, "signature", 64)
-
-    if public_key_jwk.get("kty") != "OKP" or public_key_jwk.get("crv") != "Ed25519":
-        raise ValueError("public_key_jwk must be an OKP/Ed25519 key")
-
-    x_b64 = public_key_jwk.get("x")
-    if not isinstance(x_b64, str) or not x_b64:
-        raise ValueError("public_key_jwk has no 'x' coordinate")
+    pub_bytes = validate_public_key_jwk(public_key_jwk)
 
     try:
-        pub_bytes = _decode_base64url(x_b64, "public key x", 32)
         pub = Ed25519PublicKey.from_public_bytes(pub_bytes)
     except Exception as exc:
-        raise ValueError(f"cannot load public key: {exc}")
+        raise ValueError(f"cannot load public key: {exc}") from exc
 
     try:
         pub.verify(sig, canonical_body_bytes(claim))
@@ -122,7 +142,7 @@ def verify_claim_signature(claim: dict, public_key_jwk: dict) -> bool:
 
 
 def _decode_base64url(value: str, field: str, expected_length: int) -> bytes:
-    if not _BASE64URL_RE.fullmatch(value) or "=" in value:
+    if not isinstance(value, str) or not _BASE64URL_RE.fullmatch(value) or "=" in value:
         raise ValueError(f"{field} is not unpadded base64url")
     padding = "=" * (-len(value) % 4)
     try:
@@ -133,6 +153,9 @@ def _decode_base64url(value: str, field: str, expected_length: int) -> bytes:
         raise ValueError(
             f"{field} must decode to {expected_length} bytes, got {len(decoded)}"
         )
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if canonical != value:
+        raise ValueError(f"{field} is not canonical unpadded base64url")
     return decoded
 
 
@@ -150,10 +173,13 @@ def load_producer_key(producer_id: str, producers_dir: Path) -> dict | None:
     key_file = producers_dir / filename
     if not key_file.exists():
         return None
+    from trace_verify._verify import loads_unique
+
     try:
-        return json.loads(key_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        loaded = loads_unique(key_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
         return None
+    return loaded if isinstance(loaded, dict) else None
 
 
 def verify_claim_against_registry(

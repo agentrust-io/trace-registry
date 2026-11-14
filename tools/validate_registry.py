@@ -17,7 +17,6 @@ Exit status: 0 if all lines validate (or no day files exist yet), 1 otherwise.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -25,13 +24,17 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO_ROOT / "schema" / "registry-entry.schema.json"
+if str(REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from trace_verify._verify import loads_unique  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     registry_dir = Path(argv[0]) if argv else REPO_ROOT / "registry"
 
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = loads_unique(SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
 
     day_files = sorted(registry_dir.glob("**/*.ndjson"))
@@ -52,9 +55,13 @@ def main(argv: list[str] | None = None) -> int:
                 failures += 1
                 continue
             try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
+                entry = loads_unique(line)
+            except (ValueError, RecursionError) as exc:
                 print(f"{rel}:{lineno}: invalid JSON: {exc}")
+                failures += 1
+                continue
+            if not isinstance(entry, dict):
+                print(f"{rel}:{lineno}: entry is not a JSON object")
                 failures += 1
                 continue
 

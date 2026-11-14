@@ -11,7 +11,6 @@ Exit status: 0 if all files are valid (or no files exist), 1 otherwise.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -19,13 +18,18 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO_ROOT / "schema" / "producer-key.schema.json"
+if str(REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from trace_verify._signature import validate_public_key_jwk  # noqa: E402
+from trace_verify._verify import loads_unique  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     producers_dir = Path(argv[0]) if argv else REPO_ROOT / "producers"
 
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = loads_unique(SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
 
     key_files = sorted(producers_dir.glob("*.json"))
@@ -37,28 +41,46 @@ def main(argv: list[str] | None = None) -> int:
     for key_file in key_files:
         rel = key_file.relative_to(REPO_ROOT) if key_file.is_relative_to(REPO_ROOT) else key_file
         try:
-            entry = json.loads(key_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+            entry = loads_unique(key_file.read_text(encoding="utf-8"))
+        except (ValueError, RecursionError) as exc:
             print(f"{rel}: invalid JSON: {exc}")
             failures += 1
             continue
+        if not isinstance(entry, dict):
+            print(f"{rel}: producer key entry must be a JSON object")
+            failures += 1
+            continue
 
+        file_failures = 0
         errors = sorted(validator.iter_errors(entry), key=str)
         for error in errors:
             print(f"{rel}: schema violation: {error.message}")
-        failures += len(errors)
+        file_failures += len(errors)
+
+        jwk = entry.get("public_key_jwk")
+        if isinstance(jwk, dict):
+            try:
+                validate_public_key_jwk(jwk)
+            except ValueError as exc:
+                print(f"{rel}: invalid public_key_jwk: {exc}")
+                file_failures += 1
 
         # Filename must match producer_id with / replaced by -
         producer_id = entry.get("producer_id", "")
-        expected_name = producer_id.replace("/", "-") + ".json"
+        expected_name = (
+            producer_id.replace("/", "-") + ".json"
+            if isinstance(producer_id, str)
+            else ""
+        )
         if key_file.name != expected_name:
             print(
                 f"{rel}: filename mismatch: expected {expected_name!r} "
                 f"for producer_id {producer_id!r}"
             )
-            failures += 1
+            file_failures += 1
 
-        if not failures:
+        failures += file_failures
+        if not file_failures:
             print(f"validated {rel}")
 
     if failures:

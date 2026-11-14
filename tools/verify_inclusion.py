@@ -34,6 +34,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 LEAF_PREFIX = b"\x00"
 NODE_PREFIX = b"\x01"
@@ -112,6 +113,11 @@ def canonical_claim_bytes(
     ``sorted-key`` construction). ``canonicalization_id`` and ``raw_bytes``
     are new, keyword-only, and opt-in.
     """
+    if not isinstance(canonicalization_id, str):
+        raise UnknownCanonicalizationError(
+            "canonicalization_id must be a string, got "
+            f"{type(canonicalization_id).__name__}"
+        )
     if canonicalization_id in CONTENT_DIGEST_CANONICALIZATIONS:
         raise MismatchedCanonicalizationLayerError(
             f"canonicalization_id {canonicalization_id!r} is a content-digest "
@@ -127,17 +133,106 @@ def canonical_claim_bytes(
                 "(the producer's exact signed bytes) -- there is nothing to "
                 "re-serialize at this layer, by design"
             )
+        # Contract: as-transmitted returns raw_bytes verbatim without
+        # re-serialization or sorted-key profile walking.
         return raw_bytes
     if canonicalization_id == CANONICALIZATION_SORTED_KEY:
         if not isinstance(claim, dict):
             raise ValueError("claim must be a JSON object")
-        return json.dumps(
-            claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
+        violation = anchor_profile_violation(claim)
+        if violation is not None:
+            raise ValueError(violation)
+        try:
+            return json.dumps(
+                claim, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("ascii")
+        except (RecursionError, TypeError) as exc:
+            raise ValueError(f"cannot canonicalize claim: {exc}") from exc
     raise UnknownCanonicalizationError(
         f"unknown canonicalization_id {canonicalization_id!r}; registered "
         f"anchor-leaf constructions: {sorted(ANCHOR_LEAF_CANONICALIZATIONS)}"
     )
+
+
+SAFE_INTEGER_MAX = 2**53 - 1
+
+
+def _has_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
+
+
+def loads_unique(raw: bytes | str) -> Any:
+    """``json.loads`` that refuses duplicate member names."""
+    def _unique(pairs: list[tuple[str, object]]) -> dict:
+        result: dict = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member name {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(raw, object_pairs_hook=_unique)
+
+
+def anchor_profile_violation(claim: object) -> str | None:
+    """Return why *claim* is outside the registry-anchor-v1 section 1 claim
+    profile, or None when it is inside it.
+    """
+    if not isinstance(claim, dict):
+        return "claim is not a JSON object"
+    active: set[int] = set()
+    stack: list[tuple[object, str, bool]] = [(claim, "$", False)]
+    while stack:
+        value, where, exiting = stack.pop()
+        if exiting:
+            active.discard(id(value))
+            continue
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, str):
+            if _has_surrogate(value):
+                return (
+                    f"unpaired UTF-16 surrogate in string at {where} "
+                    "(registry-anchor-v1 section 1)"
+                )
+            continue
+        if isinstance(value, int):
+            if not -SAFE_INTEGER_MAX <= value <= SAFE_INTEGER_MAX:
+                return (
+                    f"integer at {where} is outside the safe-integer range "
+                    f"-{SAFE_INTEGER_MAX}..{SAFE_INTEGER_MAX} "
+                    "(registry-anchor-v1 section 1)"
+                )
+        elif isinstance(value, float):
+            return (
+                f"non-integer number at {where}; the anchor claim profile "
+                "admits integers only (registry-anchor-v1 section 1)"
+            )
+        elif isinstance(value, dict):
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
+            for k, v in value.items():
+                if not isinstance(k, str):
+                    return f"non-string object key {type(k).__name__} at {where}"
+                if _has_surrogate(k):
+                    return (
+                        f"unpaired UTF-16 surrogate in object key at {where}.{k!r} "
+                        "(registry-anchor-v1 section 1)"
+                    )
+                stack.append((v, f"{where}.{k}", False))
+        elif isinstance(value, (list, tuple)):
+            obj_id = id(value)
+            if obj_id in active:
+                return f"circular reference at {where}"
+            active.add(obj_id)
+            stack.append((value, where, True))
+            stack.extend((v, f"{where}[{i}]", False) for i, v in enumerate(value))
+        else:
+            return f"unsupported value type {type(value).__name__} at {where}"
+    return None
 
 
 def _decode_hash(value: object) -> bytes:
@@ -205,9 +300,8 @@ def verify_inclusion(
 
 def _load_json(path: Path) -> object:
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
+        return loads_unique(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise SystemExit(f"error: cannot read {path}: {exc}")
 
 
@@ -215,13 +309,13 @@ def _load_entry(path: Path, batch_id: str | None) -> dict:
     """Load a registry entry from a single-entry file or an ndjson day file."""
     try:
         lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise SystemExit(f"error: cannot read {path}: {exc}")
     entries = []
     for ln in lines:
         try:
-            entries.append(json.loads(ln))
-        except json.JSONDecodeError as exc:
+            entries.append(loads_unique(ln))
+        except (ValueError, RecursionError) as exc:
             raise SystemExit(f"error: invalid JSON line in {path}: {exc}")
     if batch_id is not None:
         entries = [e for e in entries if isinstance(e, dict) and e.get("batch_id") == batch_id]
@@ -251,8 +345,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         claim_raw = Path(args.claim).read_bytes()
-        claim = json.loads(claim_raw)
-    except (OSError, json.JSONDecodeError) as exc:
+        claim = loads_unique(claim_raw)
+    except (OSError, ValueError, RecursionError) as exc:
         raise SystemExit(f"error: cannot read {args.claim}: {exc}")
     proof = _load_json(Path(args.proof))
     entry = _load_entry(Path(args.entry), args.batch_id)
