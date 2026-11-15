@@ -74,12 +74,17 @@ def _check_url_allowed(url: str, allowed_hosts: frozenset) -> str | None:
     return None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _fetch_json(url: str, timeout: int, allowed_hosts: frozenset) -> dict:
     reason = _check_url_allowed(url, allowed_hosts)
     if reason is not None:
         raise ValueError(f"refusing to fetch {url}: {reason}")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    with urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout) as resp:  # noqa: S310
         return json.loads(resp.read().decode("utf-8"))
 
 

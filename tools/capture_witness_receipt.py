@@ -90,6 +90,11 @@ def check_url_allowed(url, allowed_hosts):
     return None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
     """Perform one request and return an observation of what came back.
 
@@ -107,7 +112,7 @@ def request(url, allowed_hosts, *, timeout, body=None, content_type=None):
                                  method='POST' if body is not None else 'GET')
     observation = {'method': req.get_method(), 'url': url}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=timeout) as response:
             observation['status'] = response.status
             observation['body'] = response.read()
     except urllib.error.HTTPError as exc:
