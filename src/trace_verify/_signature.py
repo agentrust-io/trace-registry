@@ -15,8 +15,6 @@ import base64
 import re
 from pathlib import Path
 
-from trace_verify._verify import loads_unique
-
 # Producer ids look like name/semver (see schema/producer-key.schema.json and
 # schema/registry-entry.schema.json). This is the same pattern both schemas
 # enforce; we re-validate here so a hostile producer id can never escape the
