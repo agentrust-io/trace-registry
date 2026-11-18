@@ -6,12 +6,14 @@ import json
 from pathlib import Path
 import socket
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from verify_witness_receipt import load_json, verify
+from trace_verify._witness import CLOCK_SKEW_SECONDS
 
 PACKET = ROOT / 'docs/evidence/witness-2026-09-07'
 REGISTRY_KEY = 'bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90'
@@ -179,7 +181,7 @@ class SignedReceiptMetadataTests(unittest.TestCase):
     setUp = WitnessReceiptTests.setUp
     check = WitnessReceiptTests.check
 
-    def mint(self, headers, *, grade=None):
+    def mint(self, headers, *, grade=None, **kw):
         import cbor2
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         root = bytes.fromhex(self.check()['root'])
@@ -193,7 +195,7 @@ class SignedReceiptMetadataTests(unittest.TestCase):
         if grade is not None:
             response['grade'] = grade
         public = key.public_key().public_bytes_raw().hex()
-        return self.check(response=response, witness_key=public)
+        return self.check(response=response, witness_key=public, **kw)
 
     def test_captured_receipt_carries_no_signed_metadata(self):
         result = self.check()
@@ -247,10 +249,38 @@ class SignedReceiptMetadataTests(unittest.TestCase):
         result = self.mint({1: -8, 395: 1, 15: {6: 1}})
         self.assertFalse(result['verified'], result)
 
-    def test_implausibly_late_iat_is_refused(self):
-        result = self.mint({1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH + 31 * 86400}})
+    def test_iat_beyond_the_verifier_clock_plus_skew_is_refused(self):
+        now = CHECKPOINT_EPOCH + 90 * 86400
+        result = self.mint({1: -8, 395: 1, 15: {6: now + CLOCK_SKEW_SECONDS + 1}}, now=lambda: now)
         self.assertFalse(result['verified'], result)
-        self.assertIn('implausibly long after', result['error'])
+        self.assertIn('future of the verifier clock', result['error'])
+        # A receipt dated weeks ahead used to pass the 30-day window.
+        result = self.mint({1: -8, 395: 1, 15: {6: CHECKPOINT_EPOCH + 20 * 86400}},
+                           now=lambda: CHECKPOINT_EPOCH + 86400)
+        self.assertFalse(result['verified'], result)
+
+    def test_default_clock_refuses_a_far_future_iat(self):
+        result = self.mint({1: -8, 395: 1, 15: {6: int(time.time()) + 10 * 365 * 86400}})
+        self.assertFalse(result['verified'], result)
+        self.assertIn('future of the verifier clock', result['error'])
+
+    def test_iat_within_skew_of_the_verifier_clock_is_accepted(self):
+        now = CHECKPOINT_EPOCH + 3600
+        result = self.mint({1: -8, 395: 1, 15: {6: now + CLOCK_SKEW_SECONDS - 1}}, now=lambda: now)
+        self.assertTrue(result['verified'], result)
+
+    def test_iat_exactly_at_now_plus_skew_is_accepted(self):
+        now = CHECKPOINT_EPOCH + 3600
+        result = self.mint({1: -8, 395: 1, 15: {6: now + CLOCK_SKEW_SECONDS}}, now=lambda: now)
+        self.assertTrue(result['verified'], result)
+        self.assertTrue(result['limits']['witness_time_established'])
+
+    def test_late_countersign_beyond_thirty_days_is_accepted(self):
+        # A witness that joins later may countersign an old checkpoint.
+        iat = CHECKPOINT_EPOCH + 60 * 86400
+        result = self.mint({1: -8, 395: 1, 15: {6: iat}}, now=lambda: iat + 86400)
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['signed_iat'], iat)
 
     def test_iat_on_the_checkpoint_second_is_accepted(self):
         # The bound is inclusive at both ends, so a witness registering in the
@@ -330,18 +360,16 @@ class PostDeployWitnessHeaderTests(unittest.TestCase):
                 self.assertTrue(result['limits']['grade_cryptographically_bound'])
 
     def test_the_reported_iat_falls_inside_the_accepted_window(self):
-        """The bound is relative to the checkpoint, not to wall clock.
+        """The window is the checkpoint's timestamp to the verifier clock.
 
         Checkpoint 1 is timestamped 2026-09-01T21:39:37Z and the reported iat
-        is about ten days later, so a receipt of this shape would be accepted
-        for it on the clock alone. It is the deduplication described in
+        is about ten days later. It is the deduplication described in
         LIMITATIONS.md, not this bound, that keeps checkpoint 1 from ever
         carrying one.
         """
-        from trace_verify._witness import MAX_REGISTRATION_DELAY_SECONDS
         self.assertGreaterEqual(self.REPORTED_IAT, CHECKPOINT_EPOCH)
-        self.assertLessEqual(self.REPORTED_IAT,
-                             CHECKPOINT_EPOCH + MAX_REGISTRATION_DELAY_SECONDS)
+        result = self.mint(self._header(), now=lambda: self.REPORTED_IAT)
+        self.assertTrue(result['verified'], result)
 
 
 class ForeignAccumulatorGradeTests(unittest.TestCase):

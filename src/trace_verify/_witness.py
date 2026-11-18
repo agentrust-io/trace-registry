@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -71,13 +72,20 @@ ALLOWED_PROTECTED = {1, 395, CWT_CLAIMS, PRIVATE_GRADE}
 ACCEPTED_CWT_CLAIMS = {CWT_IAT}
 # A witness cannot register a checkpoint before that checkpoint existed, so
 # the checkpoint's own timestamp is a real lower bound on a signed iat rather
-# than a heuristic. The upper bound is only a sanity check against a clock
-# that is implausible on its face; the lower bound is the load-bearing one.
-MAX_REGISTRATION_DELAY_SECONDS = 30 * 86400
+# than a heuristic. The upper bound is the verifier's own clock: a witness
+# cannot have registered anything later than now, give or take clock skew. A
+# late countersign (a witness that joins after the checkpoint) is therefore
+# fine however long after the checkpoint it is. 300 s is the skew tolerated
+# between the witness's clock and the verifier's.
+CLOCK_SKEW_SECONDS = 300
 
 
-def read_protected(protected, decode, *, checkpoint_epoch):
-    """Return (iat, grade) from the protected header, refusing anything else."""
+def read_protected(protected, decode, *, checkpoint_epoch, now=time.time):
+    """Return (iat, grade) from the protected header, refusing anything else.
+
+    now is a callable returning the verifier's current time in epoch seconds;
+    it is injected so a test can fix the clock.
+    """
     if not isinstance(protected, (bytes, bytearray)) or not protected:
         raise ValueError('receipt protected header must be a non-empty bstr')
     headers = decode(protected)
@@ -104,8 +112,8 @@ def read_protected(protected, decode, *, checkpoint_epoch):
             raise ValueError('CWT iat must be a positive integer')
         if iat < checkpoint_epoch:
             raise ValueError('CWT iat precedes the checkpoint it registers')
-        if iat > checkpoint_epoch + MAX_REGISTRATION_DELAY_SECONDS:
-            raise ValueError('CWT iat is implausibly long after the checkpoint it registers')
+        if iat > now() + CLOCK_SKEW_SECONDS:
+            raise ValueError('CWT iat is in the future of the verifier clock')
     grade = None
     if PRIVATE_GRADE in headers:
         grade = headers[PRIVATE_GRADE]
@@ -124,7 +132,7 @@ def signing_body_digest(body):
     return hashlib.sha256(encoded.encode()).digest()
 
 
-def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
+def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id, now=time.time):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
@@ -204,7 +212,8 @@ def verify(checkpoint, response, *, registry_key, witness_key, expected_log_id):
         protected, unprotected, payload, signature = envelope
         if payload is not None:
             raise ValueError('unsupported receipt protected headers or attached payload')
-        signed_iat, signed_grade = read_protected(protected, cbor2.loads, checkpoint_epoch=checkpoint_epoch)
+        signed_iat, signed_grade = read_protected(protected, cbor2.loads, checkpoint_epoch=checkpoint_epoch,
+                                                   now=now)
         if set(unprotected) != {396} or set(unprotected[396]) != {-1} or len(unprotected[396][-1]) != 1:
             raise ValueError('expected exactly one inclusion proof')
         checks['receipt_profile'] = True
