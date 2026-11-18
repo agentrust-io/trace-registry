@@ -558,6 +558,125 @@ class TestHTTPServer(unittest.TestCase):
             server.shutdown()
         self.assertEqual(status, 404)
 
+    def test_content_length_rejects_non_decimal_and_conflicting_duplicates_and_enforces_max_body_bytes(self):
+        import email.message
+        import http.client
+        import io
+        from aggregator.server import MAX_BODY_BYTES, AggregatorHandler, _BodyError
+
+        dummy_handler = object.__new__(AggregatorHandler)
+        for bad_cl in ("\u0662", "+2", "1_0", " 2 ", "\u00b2"):
+            dummy_handler.headers = {"Content-Length": bad_cl}
+            dummy_handler.rfile = io.BytesIO(b"{}")
+            with self.assertRaises(_BodyError) as ctx:
+                dummy_handler._read_json_body()
+            self.assertEqual(ctx.exception.status, 400)
+
+        # Valid boundary controls: "0" and leading zeros "002"
+        dummy_handler.headers = {"Content-Length": "0"}
+        dummy_handler.rfile = io.BytesIO(b"")
+        self.assertIsNone(dummy_handler._read_json_body())
+
+        dummy_handler.headers = {"Content-Length": "002"}
+        dummy_handler.rfile = io.BytesIO(b"{}")
+        self.assertEqual(dummy_handler._read_json_body(), {})
+
+        # Exact MAX_BODY_BYTES passes length gate; MAX_BODY_BYTES + 1 and huge digit string raise 413
+        dummy_handler.headers = {"Content-Length": str(MAX_BODY_BYTES)}
+        dummy_handler.rfile = io.BytesIO(b"{}")
+        self.assertEqual(dummy_handler._read_json_body(), {})
+
+        for over_cl in (str(MAX_BODY_BYTES + 1), "9" * 5000):
+            dummy_handler.headers = {"Content-Length": over_cl}
+            dummy_handler.rfile = io.BytesIO(b"{}")
+            with self.assertRaises(_BodyError) as ctx:
+                dummy_handler._read_json_body()
+            self.assertEqual(ctx.exception.status, 413)
+
+        # Conflicting duplicate Content-Length headers are rejected with 400
+        dup_headers = email.message.Message()
+        dup_headers.add_header("Content-Length", "2")
+        dup_headers.add_header("Content-Length", "10")
+        dummy_handler.headers = dup_headers
+        dummy_handler.rfile = io.BytesIO(b"{}")
+        with self.assertRaises(_BodyError) as ctx:
+            dummy_handler._read_json_body()
+        self.assertEqual(ctx.exception.status, 400)
+
+        with tempfile.TemporaryDirectory() as d:
+            server, port = self._start_server(Path(d))
+            try:
+                for bad_cl in ("+2", "1_0", " 2 ", "\u00b2"):
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                    conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+                    conn.putheader("Content-Length", bad_cl)
+                    conn.endheaders()
+                    self.assertEqual(conn.getresponse().status, 400)
+                    conn.close()
+
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                conn.putrequest("POST", "/batch", skip_accept_encoding=True)
+                conn.putheader("Content-Length", "9" * 5000)
+                conn.endheaders()
+                self.assertEqual(conn.getresponse().status, 413)
+                conn.close()
+            finally:
+                server.shutdown()
+
+    def test_post_batch_rejects_invalid_producer_and_duplicate_or_nonfinite_json(self):
+        import urllib.error
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as d:
+            server, port = self._start_server(Path(d))
+            try:
+                for bad_prod in (None, "", 123, ["p/1.0.0"], {"id": "p"}):
+                    status, _ = self._post(
+                        port,
+                        {"producer": bad_prod, "claims": [{"hash": "sha256:" + "0" * 64}]},
+                    )
+                    self.assertEqual(status, 400)
+
+                for bad_raw in (
+                    b'{"claims": [{"hash": "sha256:' + b"0" * 64 + b'"}], "claims": []}',
+                    b'{"claims": [{"hash": "sha256:' + b"0" * 64 + b'", "x": NaN}]}',
+                    b'{"claims": [{"hash": "sha256:' + b"0" * 64 + b'", "x": Infinity}]}',
+                    b'{"claims": [{"hash": "sha256:' + b"0" * 64 + b'", "x": -Infinity}]}',
+                ):
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/batch",
+                        data=bad_raw,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        urllib.request.urlopen(req, timeout=10)
+                    self.assertEqual(ctx.exception.code, 400)
+            finally:
+                server.shutdown()
+
+    def test_loads_unique_and_checkpoint_log_reject_duplicates_and_nonfinite_constants(self):
+        from aggregator._mmr_log import CheckpointLog
+        from trace_verify._verify import loads_unique
+
+        self.assertEqual(loads_unique('{"a": 1}'), {"a": 1})
+        for bad_text in ('{"v": 1, "v": 2}', '{"v": NaN}', '{"v": Infinity}', '{"v": -Infinity}'):
+            with self.subTest(bad_text=bad_text):
+                with self.assertRaises(ValueError):
+                    loads_unique(bad_text)
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            for idx, bad_cp_text in enumerate(
+                ('{"v": 1, "v": 2}', '{"v": NaN}', '{"v": Infinity}', '{"v": -Infinity}')
+            ):
+                cp_dir = tmp / f"cp_bad_{idx}"
+                cp_dir.mkdir(parents=True, exist_ok=True)
+                (cp_dir / "latest-checkpoint.json").write_text(bad_cp_text, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    CheckpointLog(cp_dir)
+
+
 
 class TestHTTPServerAsTransmitted(unittest.TestCase):
     """PR-2 over the wire: POST /batch with canonicalization_id='as-transmitted'
