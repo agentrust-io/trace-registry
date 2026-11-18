@@ -34,7 +34,7 @@ class RegistryKeyPinTests(unittest.TestCase):
         self.assertIn(f"key_id {self.key}", stdout)
 
     def test_json_reports_signer_with_or_without_pin(self):
-        for flags in ([], ["--registry-key", self.key.upper()]):
+        for flags in ([], ["--registry-key", self.key]):
             with self.subTest(flags=flags):
                 code, stdout, _ = self.run_chain(self.sample, "--json", *flags)
                 self.assertEqual(code, 0)
@@ -64,7 +64,7 @@ class RegistryKeyPinTests(unittest.TestCase):
                         self.assertFalse(json.loads(stdout)["verified"])
 
     def test_malformed_pin_is_argument_error(self):
-        for key in ("", "gg" * 32, "aa" * 31, "aa" * 33, "aa " * 32):
+        for key in ("", "gg" * 32, "aa" * 31, "aa" * 33, "aa " * 32, self.key.upper()):
             with self.subTest(key=key), redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as caught:
                     main(["chain", str(self.sample), "--registry-key", key])
@@ -87,3 +87,111 @@ class RegistryKeyPinTests(unittest.TestCase):
             code, stdout, _ = self.run_chain(path, "--registry-key", self.key, "--json")
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout)["reason"], "no_checkpoints")
+
+    def test_malformed_checkpoint_reports_only_parse_error_without_follow_on_mmr_error(self):
+        bad_entry = dict(self.entry)
+        bad_cp = dict(self.entry["mmr_checkpoint"])
+        del bad_cp["root"]
+        bad_entry["mmr_checkpoint"] = bad_cp
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "malformed_cp.ndjson"
+            path.write_text(json.dumps(bad_entry) + "\n", encoding="utf-8")
+            code, stdout, _ = self.run_chain(path, "--json")
+        self.assertEqual(code, 1)
+        result = json.loads(stdout)
+        self.assertFalse(result["verified"])
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("malformed mmr_checkpoint", result["errors"][0])
+
+    def test_check_url_allowed_rejects_non_global_ips_and_inclusion_validates_int_fields(self):
+        from trace_verify import __main__ as cli_mod
+
+        orig_hosts = cli_mod._ALLOWED_HOSTS
+        try:
+            cli_mod._ALLOWED_HOSTS = frozenset(
+                {"127.0.0.1", "169.254.169.254", "10.0.0.1", "192.168.1.1", "224.0.0.1", "::1"}
+            )
+            for host in (
+                "127.0.0.1",
+                "169.254.169.254",
+                "10.0.0.1",
+                "192.168.1.1",
+                "224.0.0.1",
+                "[::1]",
+            ):
+                with self.subTest(host=host):
+                    reason = cli_mod._check_url_allowed(f"https://{host}/entry.ndjson")
+                    self.assertIsNotNone(reason)
+                    self.assertIn("non-global IP", reason or "")
+        finally:
+            cli_mod._ALLOWED_HOSTS = orig_hosts
+
+        global_reason = cli_mod._check_url_allowed("https://8.8.8.8/entry.ndjson")
+        self.assertIsNotNone(global_reason)
+        self.assertIn("not in allowlist", global_reason or "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            claim_p = Path(tmp) / "claim.json"
+            proof_p = Path(tmp) / "proof.json"
+            entry_p = Path(tmp) / "entry.ndjson"
+            claim_p.write_text('{"producer": "cmcp-gateway/0.1.0"}', encoding="utf-8")
+            base_entry = {
+                "ts": "2026-06-12T00:00:00Z",
+                "merkle_root": "sha256:" + "a" * 64,
+                "leaf_count": 1,
+                "producer": "cmcp-gateway/0.1.0",
+                "batch_id": "b1",
+            }
+            entry_p.write_text(json.dumps(base_entry) + "\n", encoding="utf-8")
+            for idx, bad_proof in enumerate(
+                (
+                    {"audit_path": []},
+                    {"audit_path": [], "leaf_index": True},
+                    {"audit_path": [], "leaf_index": -1},
+                    {"audit_path": [], "leaf_index": "0"},
+                )
+            ):
+                with self.subTest(bad_proof=idx):
+                    proof_p.write_text(json.dumps(bad_proof), encoding="utf-8")
+                    out = io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                        rc = main(
+                            [
+                                "--claim",
+                                str(claim_p),
+                                "--proof",
+                                str(proof_p),
+                                "--entry",
+                                str(entry_p),
+                                "--no-verify-signature",
+                                "--json",
+                            ]
+                        )
+                    self.assertEqual(rc, 1)
+                    self.assertIn("leaf_index", json.loads(out.getvalue())["error"])
+
+            proof_p.write_text(json.dumps({"audit_path": [], "leaf_index": 0}), encoding="utf-8")
+            for idx, bad_count in enumerate((None, True, 0, -1, "1")):
+                with self.subTest(bad_count=idx):
+                    mutated_entry = dict(base_entry)
+                    if bad_count is None:
+                        del mutated_entry["leaf_count"]
+                    else:
+                        mutated_entry["leaf_count"] = bad_count
+                    entry_p.write_text(json.dumps(mutated_entry) + "\n", encoding="utf-8")
+                    out = io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                        rc = main(
+                            [
+                                "--claim",
+                                str(claim_p),
+                                "--proof",
+                                str(proof_p),
+                                "--entry",
+                                str(entry_p),
+                                "--no-verify-signature",
+                                "--json",
+                            ]
+                        )
+                    self.assertEqual(rc, 1)
+                    self.assertIn("leaf_count", json.loads(out.getvalue())["error"])
