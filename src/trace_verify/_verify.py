@@ -151,12 +151,13 @@ def _has_surrogate(text: str) -> bool:
 
 
 def loads_unique(raw: bytes | str) -> Any:
-    """``json.loads`` that refuses duplicate member names.
+    """``json.loads`` that refuses duplicate member names and non-finite constants.
 
     Plain ``json.loads`` keeps the last value for a repeated name, so a claim
     carrying ``"hash"`` twice was signature-checked over one value while its
     transmitted bytes also carried the other, and a first-wins parser reads
-    the one the signature never covered. Raises ValueError on a duplicate.
+    the one the signature never covered. Raises ValueError on a duplicate or
+    non-finite constant.
     """
     def _unique(pairs: list[tuple[str, object]]) -> dict:
         result: dict = {}
