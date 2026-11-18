@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -162,7 +163,7 @@ def _has_surrogate(text: str) -> bool:
 
 
 def loads_unique(raw: bytes | str) -> Any:
-    """``json.loads`` that refuses duplicate member names."""
+    """``json.loads`` that refuses duplicate member names and non-finite constants."""
     def _unique(pairs: list[tuple[str, object]]) -> dict:
         result: dict = {}
         for key, value in pairs:
@@ -171,7 +172,21 @@ def loads_unique(raw: bytes | str) -> Any:
             result[key] = value
         return result
 
-    return json.loads(raw, object_pairs_hook=_unique)
+    def _no_nonfinite(token: str) -> object:
+        raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+    def _finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite JSON number is not allowed: {token}")
+        return value
+
+    return json.loads(
+        raw,
+        object_pairs_hook=_unique,
+        parse_constant=_no_nonfinite,
+        parse_float=_finite_float,
+    )
 
 
 def anchor_profile_violation(claim: object) -> str | None:

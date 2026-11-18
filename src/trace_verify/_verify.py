@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -151,12 +152,13 @@ def _has_surrogate(text: str) -> bool:
 
 
 def loads_unique(raw: bytes | str) -> Any:
-    """``json.loads`` that refuses duplicate member names.
+    """``json.loads`` that refuses duplicate member names and non-finite constants.
 
     Plain ``json.loads`` keeps the last value for a repeated name, so a claim
     carrying ``"hash"`` twice was signature-checked over one value while its
     transmitted bytes also carried the other, and a first-wins parser reads
-    the one the signature never covered. Raises ValueError on a duplicate.
+    the one the signature never covered. Raises ValueError on a duplicate or
+    non-finite constant.
     """
     def _unique(pairs: list[tuple[str, object]]) -> dict:
         result: dict = {}
@@ -169,7 +171,18 @@ def loads_unique(raw: bytes | str) -> Any:
     def _no_nonfinite(token: str) -> object:
         raise ValueError(f"non-finite JSON constant is not allowed: {token}")
 
-    return json.loads(raw, object_pairs_hook=_unique, parse_constant=_no_nonfinite)
+    def _finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite JSON number is not allowed: {token}")
+        return value
+
+    return json.loads(
+        raw,
+        object_pairs_hook=_unique,
+        parse_constant=_no_nonfinite,
+        parse_float=_finite_float,
+    )
 
 
 def anchor_profile_violation(claim: object) -> str | None:
