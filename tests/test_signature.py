@@ -105,6 +105,22 @@ class TestVerifyClaimSignature(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_claim_signature(claim_no_sig, self.jwk)
 
+    def test_non_object_claim_raises_value_error(self):
+        from trace_verify._signature import verify_claim_signature
+
+        for bad_claim in (None, "claim", 42, [self.claim], (self.claim,)):
+            with self.subTest(claim=bad_claim):
+                with self.assertRaisesRegex(ValueError, "claim must be a JSON object"):
+                    verify_claim_signature(bad_claim, self.jwk)
+
+    def test_non_object_jwk_raises_value_error_from_the_shared_validator(self):
+        from trace_verify._signature import verify_claim_signature
+
+        for bad_jwk in (None, "jwk", 42, [self.jwk]):
+            with self.subTest(jwk=bad_jwk):
+                with self.assertRaisesRegex(ValueError, "public_key_jwk must be a JSON object"):
+                    verify_claim_signature(self.claim, bad_jwk)
+
     def test_malformed_signature_raises(self):
         from trace_verify._signature import verify_claim_signature
         claim_bad_sig = {**self.claim, "signature": "!!!not-base64url!!!"}
@@ -217,6 +233,39 @@ class TestLoadProducerKey(unittest.TestCase):
         from trace_verify._signature import is_valid_producer_id
         self.assertTrue(is_valid_producer_id("cmcp-gateway/0.1.0"))
         self.assertTrue(is_valid_producer_id("acme.thing_2/10.20.30-rc1"))
+        self.assertFalse(is_valid_producer_id("cmcp-gateway/0.1.0\n"))
+
+    def test_rejects_noncanonical_pad_bits_in_signature_and_public_key(self):
+        from trace_verify._signature import verify_claim_signature
+
+        priv, jwk = _make_keypair()
+        claim = _sign_claim(priv, MINIMAL_CLAIM)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        sig = claim["signature"]
+        sig_alias = sig[:-1] + alphabet[alphabet.index(sig[-1]) ^ 1]
+        with self.assertRaisesRegex(ValueError, "canonical unpadded base64url"):
+            verify_claim_signature({**claim, "signature": sig_alias}, jwk)
+
+        x = jwk["x"]
+        x_alias = x[:-1] + alphabet[alphabet.index(x[-1]) ^ 1]
+        with self.assertRaisesRegex(ValueError, "canonical unpadded base64url"):
+            verify_claim_signature(claim, {**jwk, "x": x_alias})
+
+    def test_load_producer_key_rejects_duplicate_keys_nonfinite_and_non_dict(self):
+        from trace_verify._signature import load_producer_key
+
+        for idx, bad_json in enumerate(
+            (
+                '{"producer_id": "a/1.0.0", "producer_id": "b/1.0.0"}',
+                '{"producer_id": "a/1.0.0", "x": NaN}',
+                '{"producer_id": "a/1.0.0", "x": Infinity}',
+                '["not-a-dict"]',
+            )
+        ):
+            with self.subTest(idx=idx), tempfile.TemporaryDirectory() as tmpdir:
+                p = Path(tmpdir) / "bad-1.0.0.json"
+                p.write_text(bad_json, encoding="utf-8")
+                self.assertIsNone(load_producer_key("bad/1.0.0", Path(tmpdir)))
 
     def test_registry_verification_rejects_mismatched_key_identity(self):
         from trace_verify._signature import verify_claim_against_registry
