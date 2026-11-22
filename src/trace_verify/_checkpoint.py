@@ -113,8 +113,15 @@ def _field_type_problem(fields: dict) -> str | None:
 _UNSET = object()
 
 
-def _validate_consistency_proof(consistency_proof: object) -> None:
-    """Validate that consistency_proof is a well-formed ConsistencyProof with 64-char lowercase hex digests."""
+def _validate_consistency_proof(consistency_proof: object, prev_size: int, mmr_size: int) -> None:
+    """Validate that consistency_proof is a well-formed ConsistencyProof with
+    64-char lowercase hex digests and that its sizes are the checkpoint's own:
+    ``size_a == prev_size`` and ``size_b == mmr_size``.
+
+    The signature does not cover ``consistency_proof``, so without this binding
+    a validly signed checkpoint could carry a proof for a different pair of
+    sizes and only a full adjacent-link check would notice.
+    """
     if isinstance(consistency_proof, dict):
         try:
             consistency_proof = _mmr.ConsistencyProof.from_dict(consistency_proof)
@@ -128,6 +135,21 @@ def _validate_consistency_proof(consistency_proof: object) -> None:
         raise ValueError("consistency_proof kind must be 'consistency'")
     if type(consistency_proof.size_a) is not int or type(consistency_proof.size_b) is not int:
         raise ValueError("consistency_proof sizes must be integers")
+    if consistency_proof.size_a < 0 or consistency_proof.size_b < consistency_proof.size_a:
+        raise ValueError(
+            "consistency_proof sizes must satisfy 0 <= size_a <= size_b, got "
+            f"size_a={consistency_proof.size_a} size_b={consistency_proof.size_b}"
+        )
+    if consistency_proof.size_a != prev_size:
+        raise ValueError(
+            f"consistency_proof size_a={consistency_proof.size_a} does not match "
+            f"checkpoint prev_size={prev_size}"
+        )
+    if consistency_proof.size_b != mmr_size:
+        raise ValueError(
+            f"consistency_proof size_b={consistency_proof.size_b} does not match "
+            f"checkpoint mmr_size={mmr_size}"
+        )
     if (
         not isinstance(consistency_proof.old_peaks, (tuple, list))
         or not isinstance(consistency_proof.new_peaks, (tuple, list))
@@ -187,7 +209,7 @@ def _validate_checkpoint_fields(
             raise ValueError("checkpoint prev_root must be 64 lowercase hex characters")
         if consistency_proof is None:
             raise ValueError("non-initial checkpoint must carry consistency_proof")
-        _validate_consistency_proof(consistency_proof)
+        _validate_consistency_proof(consistency_proof, fields["prev_size"], fields["mmr_size"])
 
 
 @dataclass
@@ -197,7 +219,8 @@ class CheckpointRecord:
     ``signature`` covers the signing body (every field below except
     ``signature`` and ``consistency_proof``, serialised as deterministic
     JSON). ``consistency_proof`` is ``None`` only for the first checkpoint of
-    a log (``prev_size == 0``); every later checkpoint MUST carry one.
+    a log (``prev_size == 0``); every later checkpoint MUST carry one, and its
+    ``size_a``/``size_b`` MUST equal the checkpoint's ``prev_size``/``mmr_size``.
     """
 
     v: int
@@ -257,7 +280,8 @@ class CheckpointRecord:
         integer or string member, non-canonical hex digests/signatures, or
         violated ``prev_size`` invariants (``prev_size == 0`` requires
         ``consistency_proof is None`` and empty/omitted ``prev_root``;
-        ``prev_size > 0`` requires a valid ``consistency_proof`` and 64-char
+        ``prev_size > 0`` requires a valid ``consistency_proof`` whose
+        ``size_a == prev_size`` and ``size_b == mmr_size``, and 64-char
         lowercase hex ``prev_root``).
         """
         if not isinstance(d, dict):
