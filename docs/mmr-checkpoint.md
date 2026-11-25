@@ -7,9 +7,13 @@ auditors and anyone writing their own verifier; to just run the check, use
 `trace-verify chain` (see "Reference verifier" below). As of 2026-10-07 the registry
 holds two checkpoints, in `registry/2026/09/01.ndjson` and `registry/2026/09/25.ndjson`.
 
-**Status: implemented.** Conforms to `draft-mih-scitt-checkpointed-local-log`
-(CLL) and its companion MMR/COSE-Receipts mechanism. See
-`aggregator/_mmr_log.py`, `src/trace_verify/_mmr.py`,
+**Status: implemented.** MMR construction per
+[`draft-mih-scitt-checkpointed-local-log-02`](https://datatracker.ietf.org/doc/html/draft-mih-scitt-checkpointed-local-log-02)
+(CLL), which builds on the MMR receipts profile (`draft-bryce-cose-receipts-mmr-profile-03`,
+now [`draft-ietf-scitt-receipts-mmr-profile`](https://datatracker.ietf.org/doc/draft-ietf-scitt-receipts-mmr-profile/)
+in the SCITT working group). The checkpoint is in the registry's JSON form, not -02's
+COSE wire form; "Conformance to CLL -02" below has the field mapping and says what is
+checked. See `aggregator/_mmr_log.py`, `src/trace_verify/_mmr.py`,
 `src/trace_verify/_checkpoint.py`, and `tools/verify_checkpoint_chain.py`.
 
 ## The problem this solves
@@ -169,6 +173,66 @@ package rather than re-implementing the MMR math a second time: the
 consistency-proof algorithm is intricate enough that an independently
 maintained duplicate would risk silently drifting from the reference
 implementation it exists to audit.
+
+## Conformance to CLL -02
+
+The registry's MMR construction conforms to `draft-mih-scitt-checkpointed-local-log-02`.
+Its checkpoint does not use -02's wire form. It is the JSON object in "How it works",
+signed with Ed25519 over a JSON digest, where -02 specifies a COSE_Sign1 with CWT claims.
+A CLL or SCITT verifier cannot check a registry checkpoint as published; the mapping
+below shows how the fields correspond, and the registry does not emit the COSE form.
+
+The -02 known-answer vectors are generated from the draft text, not from any
+implementation, on top of the MMR profile (`draft-bryce-cose-receipts-mmr-profile-03`,
+since adopted by the SCITT working group as `draft-ietf-scitt-receipts-mmr-profile`).
+`tests/test_mmr_kat39.py` runs them against `trace_verify` in CI:
+
+- the 21-entry log at every prefix: node count, peaks, the concatenated commitment and
+  its SHA-256;
+- the four-checkpoint chain, mapped into the JSON shape and run through
+  `verify_checkpoint_link` and `verify_checkpoint_chain`, with the consistency proofs
+  `trace_verify` generates compared to the vectors';
+- the negative cases.
+
+The pinned vectors are in `tests/fixtures/cll-02/`, with the upstream commit and the
+steps to refresh them. When a CLL revision changes anything the registry depends on,
+refresh the vectors and the revision named here together.
+
+### Field mapping
+
+| -02 claim | Registry field | Note |
+|---|---|---|
+| `kind` = `cll-checkpoint` | `kind` = `mmr_checkpoint`, `v` = 1 | |
+| `log_size` | `mmr_size` | The MMR node count, a complete size, as in -02. |
+| `commitment` | `root` | -02 commits the peaks concatenated, tallest first. The registry commits the bagged root of the same peaks (`root_from_peaks`). The full peak list is `consistency_proof.new_peaks`. |
+| `prev_size` | `prev_size` | 0 on a first checkpoint. |
+| `prev_commitment` | `prev_root` | Empty string on a first checkpoint. |
+| `issued_at` | `timestamp` | |
+| `consistency_proof`: `[tree-size-1, tree-size-2, consistency-paths, right-peaks]` | `consistency_proof`: `size_a`, `size_b`, `old_peaks`, `witness`, `new_peaks` | `witness` is the consistency-paths. `old_peaks` are the peaks of `prev_commitment`. `new_peaks` are the peaks the paths reach followed by the right-peaks, which is the whole accumulator at `mmr_size`. The registry's proof is outside its signature. |
+| CWT claim `sub`, the log | `log_id` | |
+| COSE `kid`, `alg` -19 | `key_id`, `signature` | Raw Ed25519 key. The signature covers the JSON signing body. |
+| `cadence`, `leaf_count` | not carried | `leaf_count` is `trace_verify._mmr.leaf_count(mmr_size)`. |
+
+### Where `trace_verify` differs from -02
+
+- **No-growth checkpoints.** -02 allows `prev_size == log_size` with the same
+  commitment and no proof. `verify_consistency` accepts that case, but
+  `verify_checkpoint_link` requires `mmr_size` to strictly increase. The registry adds
+  a leaf per checkpoint, so it never emits one, and a chain that contains one is refused.
+- **A proof on a first checkpoint.** -02 refuses it. `verify_checkpoint_chain` does not
+  read the proof of a first checkpoint: it is outside the signed body and the registry
+  never emits one.
+- **Wire encoding.** -02 requires the commitment to be one byte string and the proof to
+  be the profile's CBOR array, and refuses the earlier CBOR-array commitment and
+  `size_a`/`size_b`/`old_peaks`/`witness`/`new_peaks` map. Those rules have no
+  counterpart for a JSON checkpoint, whose proof is that map in JSON.
+
+`tests/test_mmr_kat39.py` pins each difference, so changing one is a decision that
+updates this list. Every other negative vector is refused by `verify_checkpoint_chain`:
+a wrong `log_size`, an incomplete size, a missing, tampered, mis-sized or mis-ordered
+proof, a commitment that does not extend the previous one, a skipped registration and a
+per-checkpoint log identity. The `leaf_count` rule is held by the MMR layer's arithmetic,
+because the registry's checkpoint has no `leaf_count`.
 
 ## Compatibility with capsule-emit / capsule-ledger
 
