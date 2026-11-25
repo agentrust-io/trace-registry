@@ -149,8 +149,6 @@ class CheckpointLog:
         signer: "Ed25519CheckpointSigner | None" = None,
         replay_entries: list[dict] | None = None,
     ) -> None:
-        import json
-
         self._root_dir = root_dir
         self._log_id = log_id
 
@@ -183,7 +181,12 @@ class CheckpointLog:
         latest_path = root_dir / self._LATEST_FILENAME
         self._latest: CheckpointRecord | None = None
         if latest_path.exists():
-            self._latest = CheckpointRecord.from_dict(json.loads(latest_path.read_text()))
+            from trace_verify._verify import loads_unique
+
+            loaded = loads_unique(latest_path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError(f"{latest_path} is not a JSON object")
+            self._latest = CheckpointRecord.from_dict(loaded)
             if self._latest.log_id != log_id:
                 raise ValueError(
                     f"{latest_path} belongs to log_id={self._latest.log_id!r}, "

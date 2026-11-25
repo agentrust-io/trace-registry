@@ -163,7 +163,11 @@ def _has_surrogate(text: str) -> bool:
 
 
 def loads_unique(raw: bytes | str) -> Any:
-    """``json.loads`` that refuses duplicate member names and non-finite constants."""
+    """``json.loads`` that refuses duplicate member names and non-finite numbers.
+
+    Raises ValueError on a duplicate, a non-finite constant (``NaN``,
+    ``Infinity``) or a number that overflows to infinity (``1e999``).
+    """
     def _unique(pairs: list[tuple[str, object]]) -> dict:
         result: dict = {}
         for key, value in pairs:
