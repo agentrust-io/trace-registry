@@ -18,6 +18,16 @@ Two different things are versioned here and they move independently:
   `now`). A receipt dated in the verifier's future is refused, and a witness
   that joins later may countersign an older checkpoint.
 
+- **Name the CLL revision and run the -02 vectors in CI (#178).**
+  `docs/mmr-checkpoint.md` now says the MMR construction follows
+  `draft-mih-scitt-checkpointed-local-log-02` and the SCITT MMR profile, and that
+  the checkpoint is the registry's JSON form rather than -02's COSE wire form. It
+  gives the field mapping and the places `trace_verify` differs from -02.
+  `tests/test_mmr_kat39.py` runs the -02 known-answer vectors (pinned in
+  `tests/fixtures/cll-02/`): the log at every prefix, the four-checkpoint chain
+  through `verify_checkpoint_link` and `verify_checkpoint_chain`, and the
+  negative cases. No verifier behavior changes.
+
 - **Enforce `registry-anchor-v1` section 1 profile in `canonical_claim_bytes`,
   reject private JWKs, and harden MMR/JSON parsing (#146).**
   `canonical_claim_bytes` and `anchor_profile_violation` in `trace_verify` and
