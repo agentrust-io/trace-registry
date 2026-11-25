@@ -1,0 +1,9 @@
+{
+  "log_id": "nenrin-registry-witness/v1",
+  "alg": "Ed25519",
+  "public_key_hex": "c7c47d073a2c8b348d12c7207aaf7a403f5a3c2695227bf8ed2963ff52f98baf",
+  "key_id": "5f0e5ba136b3a57f",
+  "key_id_rule": "first 16 hex characters of SHA-256(raw public key), as the registry computes it for its other witness",
+  "operator": "HORIZON SHIELD (The HORIZONs Co., Ltd.)",
+  "contact": "contact@the-horizons-innovation.com"
+}

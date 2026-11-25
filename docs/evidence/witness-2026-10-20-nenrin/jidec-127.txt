@@ -1,0 +1,47 @@
+# nenrin-registry-witness-v0: enrollment and first tree head (registry-witness-v0)
+
+**Status:** a witness declaration, anchored to the JIDEC ledger and cited, never edited, once anchored. HORIZON SHIELD (The HORIZONs Co., Ltd.) operates an independent witness for the TRACE registry checkpoint chain (agentrust-io/trace-registry, log id trace-registry/v1). This record fixes the witness key and the witness log's first tree head on an anchor the witness does not own.
+
+## 1. The witness key
+
+    log_id              nenrin-registry-witness/v1
+    alg                 Ed25519
+    public_key_hex      c7c47d073a2c8b348d12c7207aaf7a403f5a3c2695227bf8ed2963ff52f98baf
+    key_id              5f0e5ba136b3a57f   (first 16 hex of SHA-256 of the raw key, as the registry computes it for its other witness)
+    WITNESS_KEY.json    sha256 f51e8bc17f487edbf112e47293ef43fb4f765b172401a13560a03b4579608090
+
+## 2. What was witnessed
+
+Registry commit 555f27afb3acc4fc145d8c9275657f31cef37bef, both checkpoints, after the registry's own two chain checks passed (consistency proofs between checkpoints, and the MMR rebuilt from the raw entries) under the pinned registry key bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90.
+
+    leaf 0  checkpoint mmr_size 1 (2026-09-01T21:39:37Z)
+            signing digest 41138372adb1921186ca6a0dbc3433a0ea2f6475cb863205603ab1231968f99a
+            entry hash     dee1a92dad155b56f99cf2284e166e3b6b935528e6d27dec8a4f67bbed6dfab6
+            receipt        sha256 953ee058d6edc872a9e3fffd8029015b328b65f72c4c852d2b93c48b3cf61dea
+            grade mmr-verified signed; no iat (the checkpoint is more than 30 days old)
+    leaf 1  checkpoint mmr_size 3 (2026-09-25T18:51:29Z)
+            signing digest 8b21417c8e533729461f2bfc6b6b1a95e554bf506e1a2f67a12d173dbc6cf22f
+            entry hash     df8e89a881c295a660b351960e7731c975624b7e4733cfcbf895521f7d9372ee
+            receipt        sha256 8567ebcf36fcb993339c066e1cf9edbc578274d20f8ecf60860563f50ac40343
+            grade mmr-verified signed; iat 1792467378 (2026-10-20T03:36:18Z) signed
+
+The first tree head of the witness log:
+
+    tree_size 2, root 9a835380c2472c3182df666ac66cee67723cde3dd932000c4b1ad80cb05ba4a5
+    tree head line sha256 aaf55bf7163e08c30fa22b4cf0dfe13bbbc37f6876c6c66fff5b0f776b90ef8d
+
+## 3. Verify it yourself
+
+The receipts verify with the registry's own command (pip install "trace-verify[witness]"):
+
+    trace-verify receipt --checkpoint state/checkpoints/<entry hash>.json --response state/receipts/<entry hash>.post.json \
+      --expected-log-id trace-registry/v1 --registry-key bc133259c094f63694b4ec48a295d7501a9a0cd536df5631fb4663c155f7bc90 \
+      --witness-key c7c47d073a2c8b348d12c7207aaf7a403f5a3c2695227bf8ed2963ff52f98baf
+
+The files are in ogasurfproject-jpg/horizon-shield under workers/hs-ledger/nenrin/registry-witness-v0/. witness.py verify rechecks the whole state against a clone of the registry.
+
+## 4. The honest boundary
+
+This record fixes when the witness key and these receipts existed: no later than the Bitcoin block this ledger entry is stamped to. It does not certify anything the registry's records claim. It does not show that every observer saw the same registry; that needs other witnesses and someone comparing them. A key holder can always sign a second history. What makes one detectable is this: every tree head is published, and the first one is fixed here. Two heads under this key that no consistency proof joins are proof of misbehaviour.
+
+**The SHA-256 of this document is anchored to the JIDEC ledger and stamped to Bitcoin. After anchoring, this record cannot be altered. Corrections are later entries that cite this one.**
