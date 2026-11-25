@@ -112,9 +112,10 @@ a coordinated change rather than an outage. And the grade label `-65537` is prov
 from the private-use range by bilateral agreement rather than registered; a third implementer
 must not read it as standard, and if a registered label is assigned the value moves under a
 migration note sent before the change. A signed `iat` is also required to fall between the
-checkpoint's own timestamp and thirty days after it, because a witness cannot have registered a
-checkpoint that did not yet exist; the lower bound is the real cross-check and the upper bound
-only rejects a clock that is implausible on its face.
+checkpoint's own timestamp and the verifier's current time plus 300 seconds of clock skew. A
+witness cannot have registered a checkpoint that did not yet exist, and it cannot have stamped
+a time still in the verifier's future; there is no upper bound relative to the checkpoint, so a
+witness that joins later can countersign an older checkpoint.
 
 ## What is in the log today
 

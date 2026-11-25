@@ -12,6 +12,12 @@ Two different things are versioned here and they move independently:
 
 ## Unreleased
 
+- Bound a signed witness `iat` by the verifier's clock instead of 30 days after
+  the checkpoint. `iat` must be at or after the checkpoint timestamp and at most
+  300 seconds past the verifier's current time (`verify()` takes an injectable
+  `now`). A receipt dated in the verifier's future is refused, and a witness
+  that joins later may countersign an older checkpoint.
+
 - **Enforce `registry-anchor-v1` section 1 profile in `canonical_claim_bytes`,
   reject private JWKs, and harden MMR/JSON parsing (#146).**
   `canonical_claim_bytes` and `anchor_profile_violation` in `trace_verify` and
