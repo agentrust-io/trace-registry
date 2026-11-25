@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import check_mirrors
 
 
-CANONICAL_SHA = "abc123def456abc123def456abc123def456abc123"
+CANONICAL_SHA = "abc123def456abc123def456abc123def456abc1"
 MIRROR_SHA_SYNC = CANONICAL_SHA
 MIRROR_SHA_BEHIND = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
@@ -242,6 +242,28 @@ class TestSSRFGuard(unittest.TestCase):
         self.assertIsNotNone(check_mirrors._check_url_allowed("https://evil.example.com/x", allowed))
         self.assertIsNone(check_mirrors._check_url_allowed("https://api.github.com/x", allowed))
 
+    def test_config_does_not_admit_non_global_ip_literals(self):
+        for host in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "[::1]", "[fc00::1]"):
+            with self.subTest(host=host):
+                config = {"canonical": {"head_api": f"https://{host}/head"}}
+                self.assertNotIn(host.strip("[]"), check_mirrors._allowed_hosts_from_config(config))
+        hosts = check_mirrors._allowed_hosts_from_config(
+            {"canonical": {"head_api": "https://8.8.8.8/head"}}
+        )
+        self.assertIn("8.8.8.8", hosts)
+
+    def test_explicit_allowlist_does_not_override_non_global_ip_refusal(self):
+        for host in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "[::1]", "[fc00::1]"):
+            with self.subTest(host=host):
+                reason = check_mirrors._check_url_allowed(
+                    f"https://{host}/head", frozenset({host.strip("[]")})
+                )
+                self.assertIsNotNone(reason)
+                self.assertIn("non-global IP literal", reason)
+        self.assertIsNone(check_mirrors._check_url_allowed(
+            "https://8.8.8.8/head", frozenset({"8.8.8.8"})
+        ))
+
     def test_allowlist_extended_from_config(self):
         config = _fake_mirrors_json([
             _mirror_entry("M", "org/m"),  # head_api on api.github.com
@@ -275,9 +297,50 @@ class TestGetHeadSha(unittest.TestCase):
                 check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
 
     def test_too_short_sha_raises(self):
-        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "abc"}):
+        for short_sha in ("abc", "a" * 7, "a" * 39):
+            with patch.object(check_mirrors, "_fetch_json", return_value={"sha": short_sha}):
+                with self.assertRaises(ValueError):
+                    check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+
+    def test_uppercase_sha_normalised_and_64_hex_accepted(self):
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "A" * 40}):
+            sha40 = check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+        self.assertEqual(sha40, "a" * 40)
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "B" * 64}):
+            sha64 = check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+        self.assertEqual(sha64, "b" * 64)
+
+    def test_non_hex_sha_raises(self):
+        with patch.object(check_mirrors, "_fetch_json", return_value={"sha": "z" * 40}):
             with self.assertRaises(ValueError):
                 check_mirrors._get_head_sha("https://example.com", 5, frozenset({"example.com"}))
+
+    def test_duplicate_keys_and_nonfinite_json_rejected(self):
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": "aaaaaaa", "sha": "bbbbbbb"}')
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": NaN}')
+        with self.assertRaises(ValueError):
+            check_mirrors._loads_strict('{"sha": Infinity}')
+
+    def test_redirect_handler_rejects_disallowed_host_or_http(self):
+        handler = check_mirrors._make_redirect_handler(frozenset({"api.github.com"}))
+        import urllib.request
+
+        req = urllib.request.Request("https://api.github.com/repos/x/y/commits/HEAD")
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "https://evil.example.com/commits/HEAD"
+            )
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "http://api.github.com/repos/x/y/commits/HEAD"
+            )
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                req, None, 302, "Found", {}, "https://mirror.example.org/commits/HEAD"
+            )
+
 
 
 if __name__ == "__main__":
